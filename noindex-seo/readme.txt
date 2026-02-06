@@ -1,19 +1,47 @@
 === noindex SEO ===
 Contributors: javiercasares
-Tags: seo, noindex
-Requires at least: 4.1
-Tested up to: 6.8
-Stable tag: 1.2.0
-Requires PHP: 5.6
-Version: 1.2.0
-License: GPL-2.0-or-later
-License URI: https://spdx.org/licenses/GPL-2.0-or-later.html
+Tags: seo, noindex, nofollow, noarchive, robots
+Requires at least: 6.6
+Tested up to: 6.9
+Stable tag: 2.0.0
+Requires PHP: 7.2
+Version: 2.0.0
+License: GPL-3.0-or-later
+License URI: https://www.gnu.org/licenses/gpl-3.0.txt
 
-Allows to add a meta-tag for robots noindex in some parts of your WordPress site.
+Control search engine indexing with robots directives using HTML meta tags or HTTP headers.
 
 == Description ==
 
-Allows to add a meta-tag for robots noindex in some parts of your WordPress site.
+Fine-grained control over how search engines index and display your WordPress content. Apply 5 independent robots directives to 25 different page contexts with flexible implementation methods.
+
+**5 Robots Directives:**
+
+* **noindex**: Prevent search engines from indexing the page
+* **nofollow**: Prevent search engines from following links on the page
+* **noarchive**: Prevent search engines from showing cached versions
+* **nosnippet**: Prevent search engines from showing text snippets in results
+* **noimageindex**: Prevent search engines from indexing images on the page
+
+**Implementation Methods:**
+
+* HTML Meta Tags: Traditional method, easy to verify in page source (default)
+* HTTP Headers: More robust, works with all content types including PDFs and images
+* Both: Maximum compatibility for all scenarios
+
+**Control Levels:**
+
+* Global Settings: Apply directives to 25 different page contexts (posts, pages, archives, etc.)
+* Granular Control (Optional): Override global settings for individual posts, pages, and custom post types via meta boxes in the editor
+
+**Perfect for:**
+
+* Blocking indexing of attachment pages while allowing link following
+* Preventing duplicate content issues with flexible directive combinations
+* Controlling archive page indexing with granular control
+* Managing pagination SEO with independent settings
+* Protecting private content from search engine caching
+* Preventing snippet display while still indexing content
 
 **Main pages**
 
@@ -81,10 +109,39 @@ Extract the contents of the ZIP and upload the contents to the `/wp-content/plug
 
 == Compatibility ==
 
-* WordPress: 4.1 - 6.8
-* PHP: 5.6 - 8.4
+* WordPress: 6.6 - 6.9
+* PHP: 7.2 - 8.5
 
 == Changelog ==
+
+= 2.0.0 [2026-01-20] =
+
+**New Features**
+
+* 5 independent robots directives: noindex, nofollow, noarchive, nosnippet, noimageindex
+* Each directive can be enabled independently for any page context (125 total options)
+* HTTP Headers support: Choose between HTML meta tags, HTTP headers, or both
+* Granular per-post/page control (optional):
+  - Override global settings for individual posts/pages
+  - Meta boxes for Classic Editor
+  - Native Gutenberg sidebar panel for Block Editor
+  - Quick Edit support for fast inline editing
+  - Bulk actions to enable/disable overrides
+  - Custom "Robots" column in post lists
+  - Filter posts by override status
+* Modern checkbox-based interface with emoji icons and tooltips
+
+**Security & Code Quality**
+
+* Modernized code with PHP 7.2+ strict types and type declarations
+
+**Compatibility & Migration**
+
+* WordPress: 6.6 - 6.9
+* PHP: 7.2 - 8.5
+* Automatic migration from v1.x (your existing settings are preserved)
+* No manual configuration needed - just update and go
+* Fully backward compatible
 
 = 1.2.0 [2025-04-08] =
 
@@ -158,6 +215,7 @@ This plugin adheres to the following security measures and review protocols for 
 
 == Vulnerabilities ==
 
-* No vulnerabilities have been published up to version 1.2.0.
+* No vulnerabilities have been published up to version 2.0.0.
+* Version 2.0.0 includes proactive security hardening based on comprehensive security audit (see docs/SECURITY-2026-01-20.md).
 
 Found a security vulnerability? Please report it to us privately at the [noindex SEO GitHub repository](https://github.com/javiercasares/noindex-seo/security/advisories/new).

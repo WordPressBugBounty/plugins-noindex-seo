@@ -1,5 +1,34 @@
 == Changelog ==
 
+= 2.0.0 [2026-01-20] =
+
+**New Features**
+
+* 5 independent robots directives: noindex, nofollow, noarchive, nosnippet, noimageindex
+* Each directive can be enabled independently for any page context (125 total options)
+* HTTP Headers support: Choose between HTML meta tags, HTTP headers, or both
+* Granular per-post/page control (optional):
+  - Override global settings for individual posts/pages
+  - Meta boxes for Classic Editor
+  - Native Gutenberg sidebar panel for Block Editor
+  - Quick Edit support for fast inline editing
+  - Bulk actions to enable/disable overrides
+  - Custom "Robots" column in post lists
+  - Filter posts by override status
+* Modern checkbox-based interface with emoji icons and tooltips
+
+**Security & Code Quality**
+
+* Modernized code with PHP 7.2+ strict types and type declarations
+
+**Compatibility & Migration**
+
+* WordPress: 6.6 - 6.9
+* PHP: 7.2 - 8.5
+* Automatic migration from v1.x (your existing settings are preserved)
+* No manual configuration needed - just update and go
+* Fully backward compatible
+
 = 1.2.0 [2025-04-08] =
 
 **Changes**
