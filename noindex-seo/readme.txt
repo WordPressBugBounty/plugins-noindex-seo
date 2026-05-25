@@ -1,11 +1,11 @@
 === noindex SEO ===
 Contributors: javiercasares
 Tags: seo, noindex, nofollow, noarchive, robots
-Requires at least: 6.6
-Tested up to: 6.9
-Stable tag: 2.0.0
+Requires at least: 5.7
+Tested up to: 7.1
+Stable tag: 2.0.1
 Requires PHP: 7.2
-Version: 2.0.0
+Version: 2.0.1
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.txt
 
@@ -109,10 +109,40 @@ Extract the contents of the ZIP and upload the contents to the `/wp-content/plug
 
 == Compatibility ==
 
-* WordPress: 6.6 - 6.9
+* WordPress: 5.7 - 7.1
 * PHP: 7.2 - 8.5
 
 == Changelog ==
+
+= 2.0.1 [2026-05-25] =
+
+**Added**
+
+* New option "Delete all plugin data on uninstall" (Settings → noindex SEO → General Configuration). By default, all data is preserved when the plugin is uninstalled. Enable this option to remove all settings and per-post directives on uninstall.
+
+**Changed**
+
+* Lowered minimum WordPress requirement from 6.6 to 5.7.
+* Custom post types registered by plugins or themes on the `init` hook now correctly receive the Robots column, bulk actions, and list filter in granular control mode.
+
+**Code Quality**
+
+* Added `NOINDEX_SEO_VERSION` constant for asset cache-busting.
+* PHP type safety improvements; passes PHPStan level 9 on PHP 8.5 with zero errors.
+* Extracted `noindex_seo_save_directives_from_post()` helper to eliminate duplicated save logic.
+* Removed dead code and dead hook registration.
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+**Tests**
+
+* PHP Coding Standards: 3.13.5
+* WordPress Coding Standards: 3.3.0
+* PHPStan: 2.1.55
+* PHPUnit: 9.6.34
 
 = 2.0.0 [2026-01-20] =
 
@@ -137,7 +167,7 @@ Extract the contents of the ZIP and upload the contents to the `/wp-content/plug
 
 **Compatibility & Migration**
 
-* WordPress: 6.6 - 6.9
+* WordPress: 5.7 - 7.1
 * PHP: 7.2 - 8.5
 * Automatic migration from v1.x (your existing settings are preserved)
 * No manual configuration needed - just update and go
@@ -215,7 +245,7 @@ This plugin adheres to the following security measures and review protocols for 
 
 == Vulnerabilities ==
 
-* No vulnerabilities have been published up to version 2.0.0.
+* No vulnerabilities have been published up to version 2.0.1.
 * Version 2.0.0 includes proactive security hardening based on comprehensive security audit (see docs/SECURITY-2026-01-20.md).
 
 Found a security vulnerability? Please report it to us privately at the [noindex SEO GitHub repository](https://github.com/javiercasares/noindex-seo/security/advisories/new).

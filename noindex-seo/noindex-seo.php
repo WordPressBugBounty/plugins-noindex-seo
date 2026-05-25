@@ -3,9 +3,9 @@
  * Plugin Name: noindex SEO
  * Plugin URI: https://wordpress.org/plugins/noindex-seo/
  * Description: Control search engine indexing with robots directives (noindex, nofollow, noarchive, nosnippet, noimageindex) for specific parts of your WordPress site.
- * Requires at least: 6.6
+ * Requires at least: 5.7
  * Requires PHP: 7.2
- * Version: 2.0.0
+ * Version: 2.0.1
  * Author: ROBOTSTXT
  * Author URI: https://www.robotstxt.es/
  * License: GPL-3.0-or-later
@@ -21,6 +21,13 @@ declare(strict_types=1);
 defined( 'ABSPATH' ) || die( 'Bye bye!' );
 
 /**
+ * Plugin version constant. Used for asset cache-busting and internal version checks.
+ *
+ * @since 2.0.1
+ */
+define( 'NOINDEX_SEO_VERSION', '2.0.1' );
+
+/**
  * Outputs robots directives using the configured implementation method.
  *
  * This function adds robots directives (noindex, nofollow, noarchive, nosnippet, noimageindex)
@@ -34,15 +41,15 @@ defined( 'ABSPATH' ) || die( 'Bye bye!' );
  * The meta tag method is more visible and easier for users to verify.
  *
  * @since 1.1.0
- * @since 2.0.0 Removed fallback for WordPress < 5.7 (now requires 6.6+).
+ * @since 2.0.0 Removed fallback for WordPress < 5.7. Requires WP 5.7+ (the 6.6 minimum in the 2.0.0 header was overly conservative; corrected in 2.0.1).
  * @since 2.0.0 Added support for HTTP X-Robots-Tag headers and multiple implementation methods.
  * @since 2.0.0 Added support for multiple directives (noindex, nofollow, noarchive, nosnippet, noimageindex).
  *
  * @see https://developer.wordpress.org/reference/hooks/wp_robots/
  * @see https://developers.google.com/search/docs/crawling-indexing/robots-meta-tag
  *
- * @param string $method     Implementation method: 'meta', 'header', or 'both'. Default 'meta'.
- * @param array  $directives Array of directives to apply. Default array('noindex').
+ * @param string             $method     Implementation method: 'meta', 'header', or 'both'. Default 'meta'.
+ * @param array<int, string> $directives Array of directives to apply. Default array('noindex').
  * @return void
  */
 function noindex_seo_metarobots( string $method = 'meta', array $directives = array( 'noindex' ) ): void {
@@ -126,11 +133,17 @@ function noindex_seo_clear_post_directives( int $post_id ): void {
  */
 function noindex_seo_show(): void {
 	/**
-	 * Filter the contexts and corresponding option keys used for noindex.
+	 * Filter the contexts and corresponding option keys used for robots directives.
 	 *
-	 * @since 1.0.0.
+	 * Custom option keys MUST follow the pattern `noindex_seo_{context}`.
+	 * Directive option keys for non-noindex directives are derived by replacing
+	 * the leading `noindex` with the directive name via str_replace(), e.g.
+	 * `noindex_seo_single` → `nofollow_seo_single`. Keys that do not start with
+	 * `noindex_seo_` are silently discarded.
 	 *
-	 * @param array $contexts Associative array of context => option_key.
+	 * @since 1.0.0
+	 *
+	 * @param array<string, string> $contexts Associative array of context slug => option_key.
 	 */
 	$contexts = apply_filters(
 		'noindex_seo_contexts',
@@ -161,16 +174,15 @@ function noindex_seo_show(): void {
 	);
 
 	// Validate filtered contexts to prevent injection of invalid option names.
-	if ( is_array( $contexts ) ) {
-		foreach ( $contexts as $context => $option_key ) {
-			// Ensure option_key follows expected pattern.
-			if ( ! is_string( $option_key ) || 0 !== strpos( $option_key, 'noindex_seo_' ) ) {
-				unset( $contexts[ $context ] );
-			}
+	// phpstan-wordpress types apply_filters() based on its default argument (array).
+	// The cast below ensures runtime safety if a filter callback returns a non-array.
+	foreach ( (array) $contexts as $context => $option_key ) {
+		// Ensure option_key follows expected pattern.
+		// is_string() check is omitted: PHPStan guarantees $option_key is string
+		// because apply_filters returns array<string,string> based on its default argument.
+		if ( 0 !== strpos( $option_key, 'noindex_seo_' ) ) {
+			unset( $contexts[ $context ] );
 		}
-	} else {
-		// If contexts is not an array after filtering, reset to defaults.
-		$contexts = array();
 	}
 
 	// PRIORITY 1: Check for per-post/page override (granular control).
@@ -189,14 +201,15 @@ function noindex_seo_show(): void {
 				foreach ( $available_directives as $directive ) {
 					$meta_value = get_post_meta( $post_id, '_noindex_seo_' . $directive, true );
 					// Explicitly check for 1 or '1' to avoid false positives with '0' string.
-					if ( 1 === absint( $meta_value ) ) {
+					if ( is_scalar( $meta_value ) && 1 === absint( $meta_value ) ) {
 						$post_directives[] = $directive;
 					}
 				}
 
 				// Apply post-specific directives if any are enabled.
 				if ( ! empty( $post_directives ) ) {
-					$implementation_method = get_option( 'noindex_seo_config_method', 'meta' );
+					$opt                   = get_option( 'noindex_seo_config_method', 'meta' );
+					$implementation_method = is_string( $opt ) ? $opt : 'meta';
 					noindex_seo_metarobots( $implementation_method, $post_directives );
 					return; // Exit early - post meta takes precedence over global settings.
 				}
@@ -211,14 +224,14 @@ function noindex_seo_show(): void {
 	// Available directives.
 	$available_directives = array( 'noindex', 'nofollow', 'noarchive', 'nosnippet', 'noimageindex' );
 
-	if ( false === $options || empty( $options ) ) {
+	if ( false === $options || ! is_array( $options ) || empty( $options ) ) {
 		// Transient not set, retrieve options from the database.
 		$options = array();
 
 		foreach ( $contexts as $context => $option_key ) {
 			// Load all directives for each context.
 			foreach ( $available_directives as $directive ) {
-				$directive_key             = str_replace( 'noindex', $directive, $option_key );
+				$directive_key             = str_replace( 'noindex', $directive, (string) $option_key );
 				$options[ $directive_key ] = get_option( $directive_key, 0 );
 			}
 		}
@@ -259,7 +272,8 @@ function noindex_seo_show(): void {
 	);
 
 	// Get implementation method configuration.
-	$implementation_method = get_option( 'noindex_seo_config_method', 'meta' );
+	$opt                   = get_option( 'noindex_seo_config_method', 'meta' );
+	$implementation_method = is_string( $opt ) ? $opt : 'meta';
 
 	// Iterate through the contexts and collect active directives.
 	foreach ( $contexts as $context => $option_key ) {
@@ -272,7 +286,7 @@ function noindex_seo_show(): void {
 			$active_directives = array();
 
 			foreach ( $available_directives as $directive ) {
-				$directive_key = str_replace( 'noindex', $directive, $option_key );
+				$directive_key = str_replace( 'noindex', $directive, (string) $option_key );
 
 				if ( isset( $options[ $directive_key ] ) && (bool) $options[ $directive_key ] ) {
 					$active_directives[] = $directive;
@@ -408,7 +422,7 @@ function noindex_seo_enqueue_admin_assets( string $hook ): void {
 		'noindex-seo-admin',
 		plugins_url( 'assets/css/admin.css', __FILE__ ),
 		array(),
-		'2.0.0',
+		NOINDEX_SEO_VERSION,
 		'all'
 	);
 
@@ -417,7 +431,7 @@ function noindex_seo_enqueue_admin_assets( string $hook ): void {
 		'noindex-seo-admin',
 		plugins_url( 'assets/js/admin.js', __FILE__ ),
 		array( 'jquery' ),
-		'2.0.0',
+		NOINDEX_SEO_VERSION,
 		true
 	);
 
@@ -470,7 +484,7 @@ function noindex_seo_enqueue_editor_assets(): void {
 			'wp-data',
 			'wp-i18n',
 		),
-		'2.0.0',
+		NOINDEX_SEO_VERSION,
 		true
 	);
 
@@ -493,8 +507,8 @@ add_action( 'enqueue_block_editor_assets', 'noindex_seo_enqueue_editor_assets' )
  *
  * @since 1.0.0
  *
- * @param array $links Array of existing action links for the plugin.
- * @return array Modified array including the "Settings" link.
+ * @param array<string|int, string> $links Array of existing action links for the plugin.
+ * @return array<string|int, string> Modified array including the "Settings" link.
  */
 function noindex_seo_settings_link( array $links ): array {
 	$settings_link = '<a href="' . esc_url( admin_url( 'options-general.php?page=noindex_seo' ) ) . '">' . esc_html__( 'Settings', 'noindex-seo' ) . '</a>';
@@ -621,9 +635,18 @@ function noindex_seo_register(): void {
 		)
 	);
 
-	// Hook to settings update to clear transient cache..
-	// Note: Hook receives $old_value and $value parameters but we don't need them.
-	add_action( 'update_option_noindexseo', 'noindex_seo_clear_transient', 10, 0 );
+	register_setting(
+		'noindexseo',
+		'noindex_seo_config_delete_on_uninstall',
+		array(
+			'type'    => 'integer',
+			'default' => 0,
+		)
+	);
+
+	// NOTE: 'noindexseo' is the Settings API *group* name, not an option name.
+	// update_option_noindexseo would never fire; the transient is cleared explicitly
+	// inside noindex_seo_process_form() after every successful form save.
 }
 
 /**
@@ -671,7 +694,7 @@ function noindex_seo_detect_conflicts(): void {
 
 	$option_config_seoplugins = get_option( 'noindex_seo_config_seoplugins', 0 );
 
-	if ( ! absint( $option_config_seoplugins ) ) {
+	if ( ! ( is_scalar( $option_config_seoplugins ) ? absint( $option_config_seoplugins ) : 0 ) ) {
 
 		// Include the plugin.php file if the function is not available..
 		if ( ! function_exists( 'is_plugin_active' ) ) {
@@ -763,7 +786,7 @@ function noindex_seo_process_form(): void {
 	$directives = array( 'noindex', 'nofollow', 'noarchive', 'nosnippet', 'noimageindex' );
 
 	// Get the implementation method to validate field compatibility.
-	$method_value = isset( $_POST['noindex_seo_config_method'] )
+	$method_value = ( isset( $_POST['noindex_seo_config_method'] ) && is_string( $_POST['noindex_seo_config_method'] ) )
 		? sanitize_text_field( wp_unslash( $_POST['noindex_seo_config_method'] ) )
 		: 'meta';
 
@@ -788,7 +811,7 @@ function noindex_seo_process_form(): void {
 			}
 
 			$option_key   = $directive . '_seo_' . $context;
-			$option_value = isset( $_POST[ $option_key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $option_key ] ) ) : '';
+			$option_value = ( isset( $_POST[ $option_key ] ) && is_string( $_POST[ $option_key ] ) ) ? sanitize_text_field( wp_unslash( $_POST[ $option_key ] ) ) : '';
 
 			// Additional validation: only accept '1' or empty string.
 			if ( '' !== $option_value && '1' !== $option_value ) {
@@ -812,7 +835,7 @@ function noindex_seo_process_form(): void {
 	}
 
 	// Save general configuration option..
-	$config_value = isset( $_POST['noindex_seo_config_seoplugins'] )
+	$config_value = ( isset( $_POST['noindex_seo_config_seoplugins'] ) && is_string( $_POST['noindex_seo_config_seoplugins'] ) )
 		? absint( $_POST['noindex_seo_config_seoplugins'] )
 		: 0;
 
@@ -825,11 +848,18 @@ function noindex_seo_process_form(): void {
 	update_option( 'noindex_seo_config_method', $method_value );
 
 	// Save granular control configuration.
-	$granular_value = isset( $_POST['noindex_seo_config_granular'] )
+	$granular_value = ( isset( $_POST['noindex_seo_config_granular'] ) && is_string( $_POST['noindex_seo_config_granular'] ) )
 		? absint( $_POST['noindex_seo_config_granular'] )
 		: 0;
 	$granular_value = ( 1 === $granular_value ) ? 1 : 0;
 	update_option( 'noindex_seo_config_granular', $granular_value );
+
+	// Save delete-on-uninstall configuration.
+	$delete_value = ( isset( $_POST['noindex_seo_config_delete_on_uninstall'] ) && is_string( $_POST['noindex_seo_config_delete_on_uninstall'] ) )
+		? absint( $_POST['noindex_seo_config_delete_on_uninstall'] )
+		: 0;
+	$delete_value = ( 1 === $delete_value ) ? 1 : 0;
+	update_option( 'noindex_seo_config_delete_on_uninstall', $delete_value );
 
 	// Clear cache..
 	delete_transient( 'noindex_seo_options' );
@@ -1070,6 +1100,37 @@ function noindex_seo_render_meta_box( WP_Post $post ): void {
 }
 
 /**
+ * Persist robots override and directive post meta from the current $_POST data.
+ *
+ * Shared by the meta box save path and the Quick Edit save path.
+ * Callers are responsible for nonce verification and capability checks
+ * before invoking this helper.
+ *
+ * @since 2.0.1
+ *
+ * @param int $post_id The post ID to update.
+ * @return void
+ */
+function noindex_seo_save_directives_from_post( int $post_id ): void {
+	// phpcs:disable WordPress.Security.NonceVerification.Missing
+	// Nonce verification and capability checks are performed by the callers:
+	// noindex_seo_save_post_meta() and noindex_seo_save_quick_edit().
+	$override = isset( $_POST['noindex_seo_override'] ) ? 1 : 0;
+	update_post_meta( $post_id, '_noindex_seo_override', $override );
+
+	if ( $override ) {
+		$directives = array( 'noindex', 'nofollow', 'noarchive', 'nosnippet', 'noimageindex' );
+		foreach ( $directives as $directive ) {
+			$value = isset( $_POST[ 'noindex_seo_' . $directive ] ) ? 1 : 0;
+			update_post_meta( $post_id, '_noindex_seo_' . $directive, $value );
+		}
+	} else {
+		noindex_seo_clear_post_directives( $post_id );
+	}
+	// phpcs:enable WordPress.Security.NonceVerification.Missing
+}
+
+/**
  * Save post meta when post is saved.
  *
  * Validates nonce, checks user permissions, and saves the override settings.
@@ -1087,9 +1148,14 @@ function noindex_seo_save_post_meta( int $post_id ): void {
 		return;
 	}
 
-	// Verify nonce.
+	// Verify nonce. The is_string() ternary narrows the type from mixed to string
+	// so wp_unslash() returns string and sanitize_text_field() receives string.
 	if ( ! isset( $_POST['noindex_seo_meta_box_nonce'] ) ||
-		! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['noindex_seo_meta_box_nonce'] ) ), 'noindex_seo_meta_box' ) ) {
+		! wp_verify_nonce(
+			sanitize_text_field( wp_unslash( is_string( $_POST['noindex_seo_meta_box_nonce'] ) ? $_POST['noindex_seo_meta_box_nonce'] : '' ) ),
+			'noindex_seo_meta_box'
+		)
+	) {
 		return;
 	}
 
@@ -1103,21 +1169,7 @@ function noindex_seo_save_post_meta( int $post_id ): void {
 		return;
 	}
 
-	// Check if override is enabled.
-	$override = isset( $_POST['noindex_seo_override'] ) ? 1 : 0;
-	update_post_meta( $post_id, '_noindex_seo_override', $override );
-
-	// If override is enabled, save the directive values.
-	if ( $override ) {
-		$directives = array( 'noindex', 'nofollow', 'noarchive', 'nosnippet', 'noimageindex' );
-		foreach ( $directives as $directive ) {
-			$value = isset( $_POST[ 'noindex_seo_' . $directive ] ) ? 1 : 0;
-			update_post_meta( $post_id, '_noindex_seo_' . $directive, $value );
-		}
-	} else {
-		// If override is disabled, delete all directive meta.
-		noindex_seo_clear_post_directives( $post_id );
-	}
+	noindex_seo_save_directives_from_post( $post_id );
 }
 add_action( 'save_post', 'noindex_seo_save_post_meta' );
 
@@ -1128,8 +1180,8 @@ add_action( 'save_post', 'noindex_seo_save_post_meta' );
  *
  * @since 2.0.0
  *
- * @param array $columns Existing columns.
- * @return array Modified columns.
+ * @param array<string, string> $columns Existing columns.
+ * @return array<string, string> Modified columns.
  */
 function noindex_seo_add_custom_column( array $columns ): array {
 	// Check if granular control is enabled.
@@ -1172,19 +1224,25 @@ function noindex_seo_display_custom_column( string $column, int $post_id ): void
 	$override = get_post_meta( $post_id, '_noindex_seo_override', true );
 
 	// Collect directive values for Quick Edit.
+	$meta_noindex      = get_post_meta( $post_id, '_noindex_seo_noindex', true );
+	$meta_nofollow     = get_post_meta( $post_id, '_noindex_seo_nofollow', true );
+	$meta_noarchive    = get_post_meta( $post_id, '_noindex_seo_noarchive', true );
+	$meta_nosnippet    = get_post_meta( $post_id, '_noindex_seo_nosnippet', true );
+	$meta_noimageindex = get_post_meta( $post_id, '_noindex_seo_noimageindex', true );
+
 	$directives_values = array(
-		'override'     => absint( $override ),
-		'noindex'      => absint( get_post_meta( $post_id, '_noindex_seo_noindex', true ) ),
-		'nofollow'     => absint( get_post_meta( $post_id, '_noindex_seo_nofollow', true ) ),
-		'noarchive'    => absint( get_post_meta( $post_id, '_noindex_seo_noarchive', true ) ),
-		'nosnippet'    => absint( get_post_meta( $post_id, '_noindex_seo_nosnippet', true ) ),
-		'noimageindex' => absint( get_post_meta( $post_id, '_noindex_seo_noimageindex', true ) ),
+		'override'     => ( is_scalar( $override ) ? absint( $override ) : 0 ),
+		'noindex'      => ( is_scalar( $meta_noindex ) ? absint( $meta_noindex ) : 0 ),
+		'nofollow'     => ( is_scalar( $meta_nofollow ) ? absint( $meta_nofollow ) : 0 ),
+		'noarchive'    => ( is_scalar( $meta_noarchive ) ? absint( $meta_noarchive ) : 0 ),
+		'nosnippet'    => ( is_scalar( $meta_nosnippet ) ? absint( $meta_nosnippet ) : 0 ),
+		'noimageindex' => ( is_scalar( $meta_noimageindex ) ? absint( $meta_noimageindex ) : 0 ),
 	);
 
 	// Output hidden data for Quick Edit to read.
 	echo '<div class="noindex-seo-override-data hidden" ';
 	foreach ( $directives_values as $key => $value ) {
-		echo 'data-' . esc_attr( $key ) . '="' . esc_attr( $value ) . '" ';
+		echo 'data-' . esc_attr( $key ) . '="' . esc_attr( (string) $value ) . '" ';
 	}
 	echo '></div>';
 
@@ -1236,12 +1294,17 @@ function noindex_seo_display_custom_column( string $column, int $post_id ): void
 	echo '</div>';
 }
 
-// Register column hooks for all public post types.
-$noindex_seo_post_types_columns = get_post_types( array( 'public' => true ), 'names' );
-foreach ( $noindex_seo_post_types_columns as $noindex_seo_post_type_column ) {
-	add_filter( "manage_{$noindex_seo_post_type_column}_posts_columns", 'noindex_seo_add_custom_column' );
-	add_action( "manage_{$noindex_seo_post_type_column}_posts_custom_column", 'noindex_seo_display_custom_column', 10, 2 );
-}
+// Register column hooks after all CPTs are registered (admin_init fires after init).
+add_action(
+	'admin_init',
+	function (): void {
+		$post_types = get_post_types( array( 'public' => true ), 'names' );
+		foreach ( $post_types as $post_type ) {
+			add_filter( "manage_{$post_type}_posts_columns", 'noindex_seo_add_custom_column' );
+			add_action( "manage_{$post_type}_posts_custom_column", 'noindex_seo_display_custom_column', 10, 2 );
+		}
+	}
+);
 
 /**
  * Add Quick Edit fields for robots directives.
@@ -1365,9 +1428,14 @@ function noindex_seo_save_quick_edit( int $post_id ): void {
 		return;
 	}
 
-	// Verify nonce.
+	// Verify nonce. The is_string() ternary narrows the type from mixed to string
+	// so wp_unslash() returns string and sanitize_text_field() receives string.
 	if ( ! isset( $_POST['noindex_seo_quick_edit_nonce'] ) ||
-		! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['noindex_seo_quick_edit_nonce'] ) ), 'noindex_seo_quick_edit' ) ) {
+		! wp_verify_nonce(
+			sanitize_text_field( wp_unslash( is_string( $_POST['noindex_seo_quick_edit_nonce'] ) ? $_POST['noindex_seo_quick_edit_nonce'] : '' ) ),
+			'noindex_seo_quick_edit'
+		)
+	) {
 		return;
 	}
 
@@ -1381,19 +1449,7 @@ function noindex_seo_save_quick_edit( int $post_id ): void {
 		return;
 	}
 
-	// Save override and directives (same logic as save_post_meta).
-	$override = isset( $_POST['noindex_seo_override'] ) ? 1 : 0;
-	update_post_meta( $post_id, '_noindex_seo_override', $override );
-
-	if ( $override ) {
-		$directives = array( 'noindex', 'nofollow', 'noarchive', 'nosnippet', 'noimageindex' );
-		foreach ( $directives as $directive ) {
-			$value = isset( $_POST[ 'noindex_seo_' . $directive ] ) ? 1 : 0;
-			update_post_meta( $post_id, '_noindex_seo_' . $directive, $value );
-		}
-	} else {
-		noindex_seo_clear_post_directives( $post_id );
-	}
+	noindex_seo_save_directives_from_post( $post_id );
 }
 add_action( 'save_post', 'noindex_seo_save_quick_edit' );
 
@@ -1404,8 +1460,8 @@ add_action( 'save_post', 'noindex_seo_save_quick_edit' );
  *
  * @since 2.0.0
  *
- * @param array $bulk_actions Existing bulk actions.
- * @return array Modified bulk actions.
+ * @param array<string, string> $bulk_actions Existing bulk actions.
+ * @return array<string, string> Modified bulk actions.
  */
 function noindex_seo_register_bulk_actions( array $bulk_actions ): array {
 	// Check if granular control is enabled.
@@ -1425,9 +1481,9 @@ function noindex_seo_register_bulk_actions( array $bulk_actions ): array {
  *
  * @since 2.0.0
  *
- * @param string $redirect_to Redirect URL.
- * @param string $action      Action being taken.
- * @param array  $post_ids    Array of post IDs.
+ * @param string             $redirect_to Redirect URL.
+ * @param string             $action      Action being taken.
+ * @param array<int, string> $post_ids    Array of post IDs.
  * @return string Modified redirect URL.
  */
 function noindex_seo_handle_bulk_actions( string $redirect_to, string $action, array $post_ids ): string {
@@ -1535,7 +1591,7 @@ function noindex_seo_bulk_actions_admin_notice(): void {
 	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- URL parameter from redirect after bulk action, not form data.
 	if ( ! empty( $_REQUEST['noindex_seo_bulk_enabled'] ) ) {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- URL parameter from redirect after bulk action, not form data.
-		$count = absint( $_REQUEST['noindex_seo_bulk_enabled'] );
+		$count = is_scalar( $_REQUEST['noindex_seo_bulk_enabled'] ) ? absint( $_REQUEST['noindex_seo_bulk_enabled'] ) : 0;
 		printf(
 			'<div class="notice notice-success is-dismissible"><p>%s</p></div>',
 			esc_html(
@@ -1556,7 +1612,7 @@ function noindex_seo_bulk_actions_admin_notice(): void {
 	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- URL parameter from redirect after bulk action, not form data.
 	if ( ! empty( $_REQUEST['noindex_seo_bulk_disabled'] ) ) {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- URL parameter from redirect after bulk action, not form data.
-		$count = absint( $_REQUEST['noindex_seo_bulk_disabled'] );
+		$count = is_scalar( $_REQUEST['noindex_seo_bulk_disabled'] ) ? absint( $_REQUEST['noindex_seo_bulk_disabled'] ) : 0;
 		printf(
 			'<div class="notice notice-success is-dismissible"><p>%s</p></div>',
 			esc_html(
@@ -1576,12 +1632,17 @@ function noindex_seo_bulk_actions_admin_notice(): void {
 }
 add_action( 'admin_notices', 'noindex_seo_bulk_actions_admin_notice' );
 
-// Register bulk actions for all public post types.
-$noindex_seo_post_types_bulk = get_post_types( array( 'public' => true ), 'names' );
-foreach ( $noindex_seo_post_types_bulk as $noindex_seo_post_type_bulk ) {
-	add_filter( "bulk_actions-edit-{$noindex_seo_post_type_bulk}", 'noindex_seo_register_bulk_actions' );
-	add_filter( "handle_bulk_actions-edit-{$noindex_seo_post_type_bulk}", 'noindex_seo_handle_bulk_actions', 10, 3 );
-}
+// Register bulk action hooks after all CPTs are registered.
+add_action(
+	'admin_init',
+	function (): void {
+		$post_types = get_post_types( array( 'public' => true ), 'names' );
+		foreach ( $post_types as $post_type ) {
+			add_filter( "bulk_actions-edit-{$post_type}", 'noindex_seo_register_bulk_actions' );
+			add_filter( "handle_bulk_actions-edit-{$post_type}", 'noindex_seo_handle_bulk_actions', 10, 3 );
+		}
+	}
+);
 
 /**
  * Add filter dropdown to post list for robots override status.
@@ -1602,7 +1663,7 @@ function noindex_seo_add_list_filter( string $post_type ): void { // phpcs:ignor
 
 	// Get current filter value from URL parameters (not a form submission, no nonce needed).
 	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- URL parameter for filtering, not form data.
-	$current_filter = isset( $_GET['noindex_seo_filter'] ) ? sanitize_text_field( wp_unslash( $_GET['noindex_seo_filter'] ) ) : '';
+	$current_filter = ( isset( $_GET['noindex_seo_filter'] ) && is_string( $_GET['noindex_seo_filter'] ) ) ? sanitize_text_field( wp_unslash( $_GET['noindex_seo_filter'] ) ) : '';
 
 	?>
 	<select name="noindex_seo_filter">
@@ -1647,7 +1708,7 @@ function noindex_seo_filter_posts_by_override( WP_Query $query ): void {
 	}
 
 	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- URL parameter for filtering, not form data.
-	$filter = sanitize_text_field( wp_unslash( $_GET['noindex_seo_filter'] ) );
+	$filter = is_string( $_GET['noindex_seo_filter'] ) ? sanitize_text_field( wp_unslash( $_GET['noindex_seo_filter'] ) ) : '';
 
 	// Validate against whitelist of allowed filter values.
 	$valid_filters = array( 'with_override', 'without_override' );
@@ -1681,25 +1742,28 @@ function noindex_seo_filter_posts_by_override( WP_Query $query ): void {
 		);
 	}
 
-	if ( ! empty( $meta_query ) ) {
-		$query->set( 'meta_query', $meta_query );
-	}
+	$query->set( 'meta_query', $meta_query );
 }
 add_action( 'pre_get_posts', 'noindex_seo_filter_posts_by_override' );
 
-// Register filter dropdown for all public post types.
-$noindex_seo_post_types_filter = get_post_types( array( 'public' => true ), 'names' );
-foreach ( $noindex_seo_post_types_filter as $noindex_seo_post_type_filter ) {
-	add_action(
-		'restrict_manage_posts',
-		function () use ( $noindex_seo_post_type_filter ) {
-			global $typenow;
-			if ( $typenow === $noindex_seo_post_type_filter ) {
-				noindex_seo_add_list_filter( $noindex_seo_post_type_filter );
-			}
+// Register filter dropdown after all CPTs are registered.
+add_action(
+	'admin_init',
+	function (): void {
+		$post_types = get_post_types( array( 'public' => true ), 'names' );
+		foreach ( $post_types as $post_type ) {
+			add_action(
+				'restrict_manage_posts',
+				function () use ( $post_type ): void {
+					global $typenow;
+					if ( $typenow === $post_type ) {
+						noindex_seo_add_list_filter( $post_type );
+					}
+				}
+			);
 		}
-	);
-}
+	}
+);
 
 /**
  * Renders the modern, visual settings page for the 'noindex SEO' plugin.
@@ -1931,10 +1995,15 @@ function noindex_seo_admin(): void {
 		),
 	);
 
-	// Get config options.
-	$option_config_seoplugins = get_option( 'noindex_seo_config_seoplugins', 0 );
-	$option_config_method     = get_option( 'noindex_seo_config_method', 'meta' );
-	$option_config_granular   = get_option( 'noindex_seo_config_granular', 0 );
+	// Get config options with explicit type narrowing.
+	$opt_seoplugins                    = get_option( 'noindex_seo_config_seoplugins', 0 );
+	$option_config_seoplugins          = is_scalar( $opt_seoplugins ) ? absint( $opt_seoplugins ) : 0;
+	$opt_method                        = get_option( 'noindex_seo_config_method', 'meta' );
+	$option_config_method              = is_string( $opt_method ) ? $opt_method : 'meta';
+	$opt_granular                      = get_option( 'noindex_seo_config_granular', 0 );
+	$option_config_granular            = is_scalar( $opt_granular ) ? absint( $opt_granular ) : 0;
+	$opt_delete                        = get_option( 'noindex_seo_config_delete_on_uninstall', 0 );
+	$option_config_delete_on_uninstall = is_scalar( $opt_delete ) ? absint( $opt_delete ) : 0;
 
 	// Define fields that only work with HTTP headers (non-HTML content).
 	$header_only_fields = array( 'attachment', 'feed', 'comment_feed' );
@@ -2062,6 +2131,27 @@ function noindex_seo_admin(): void {
 						</p>
 					</div>
 				</div>
+
+				<div class="noindex-seo-config-option" style="margin-top: 20px;">
+					<label class="noindex-seo-switch">
+						<input
+							type="checkbox"
+							id="noindex_seo_config_delete_on_uninstall"
+							name="noindex_seo_config_delete_on_uninstall"
+							value="1"
+							<?php checked( 1, $option_config_delete_on_uninstall ); ?>
+						>
+						<span class="noindex-seo-slider"></span>
+					</label>
+					<div style="flex: 1;">
+						<label for="noindex_seo_config_delete_on_uninstall" style="display: block; font-weight: 600; color: #b91c1c;">
+							<?php esc_html_e( 'Delete all plugin data on uninstall', 'noindex-seo' ); ?>
+						</label>
+						<p style="margin: 4px 0 0 0; font-size: 13px; color: #64748b; line-height: 1.5;">
+							<?php esc_html_e( 'When enabled, all settings and per-post robots directives will be permanently deleted when the plugin is uninstalled. By default data is preserved.', 'noindex-seo' ); ?>
+						</p>
+					</div>
+				</div>
 			</div>
 
 			<!-- Alert -->
@@ -2082,7 +2172,7 @@ function noindex_seo_admin(): void {
 			<!-- Sections as Cards -->
 			<?php foreach ( $sections as $section_id => $section ) : ?>
 				<?php
-				$icon = isset( $section_icons[ $section_id ] ) ? $section_icons[ $section_id ] : 'dashicons-admin-generic';
+				$icon = $section_icons[ $section_id ];
 				?>
 				<div class="noindex-seo-card" id="noindex-seo-card-<?php echo esc_attr( $section_id ); ?>">
 					<div class="noindex-seo-card-header">
@@ -2095,11 +2185,6 @@ function noindex_seo_admin(): void {
 					<div class="noindex-seo-card-body">
 						<?php foreach ( $section['fields'] as $field_id => $field ) : ?>
 							<?php
-							// Check for conditional display..
-							if ( isset( $field['conditional'] ) && ! $field['conditional'] ) {
-								continue;
-							}
-
 							// Check if field should be disabled (header-only fields with meta method).
 							$should_disable = in_array( $field_id, $header_only_fields, true ) && ! $is_header_enabled;
 							?>
@@ -2107,17 +2192,15 @@ function noindex_seo_admin(): void {
 								<div class="noindex-seo-option-header">
 									<div class="noindex-seo-option-title">
 										<strong><?php echo esc_html( $field['label'] ); ?></strong>
-										<?php if ( isset( $field['suggestion'] ) ) : ?>
-											<span class="noindex-seo-badge <?php echo $field['suggestion'] ? 'recommended' : 'not-recommended'; ?>">
-												<?php
-												if ( $field['suggestion'] ) {
-													esc_html_e( 'Recommended', 'noindex-seo' );
-												} else {
-													esc_html_e( 'Not Recommended', 'noindex-seo' );
-												}
-												?>
-											</span>
-										<?php endif; ?>
+										<span class="noindex-seo-badge <?php echo $field['suggestion'] ? 'recommended' : 'not-recommended'; ?>">
+											<?php
+											if ( $field['suggestion'] ) {
+												esc_html_e( 'Recommended', 'noindex-seo' );
+											} else {
+												esc_html_e( 'Not Recommended', 'noindex-seo' );
+											}
+											?>
+										</span>
 										<?php if ( isset( $field['view_url'] ) && ! empty( $field['view_url'] ) ) : ?>
 											<a href="<?php echo esc_url( $field['view_url'] ); ?>" target="_blank" class="noindex-seo-view-link" title="<?php esc_attr_e( 'View Page', 'noindex-seo' ); ?>">
 												<span class="dashicons dashicons-external"></span>

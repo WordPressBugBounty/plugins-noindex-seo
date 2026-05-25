@@ -3,12 +3,14 @@
  * Uninstall the noindex SEO plugin.
  *
  * This file is called by WordPress when the plugin is deleted through the admin interface.
- * It removes all plugin options and transients from the database to ensure a clean uninstall.
+ * By default, plugin data is preserved. Data is only deleted when the administrator has
+ * explicitly enabled the "Delete all plugin data on uninstall" option in settings.
  *
  * @package noindex-seo
  * @since 1.0.0
  * @since 2.0.0 Added cleanup for new implementation method option and transients.
  * @since 2.0.0 Added cleanup for multiple directives (noindex, nofollow, noarchive, nosnippet, noimageindex).
+ * @since 2.0.1 Data is now preserved by default; deletion requires explicit opt-in.
  */
 
 declare(strict_types=1);
@@ -17,6 +19,16 @@ declare(strict_types=1);
 if ( ! defined( 'ABSPATH' ) || ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 	exit;
 }
+
+// Respect the user's data-preservation preference.
+// Default (0) = preserve data. Only delete when the user has explicitly opted in (1).
+$noindex_seo_delete = get_option( 'noindex_seo_config_delete_on_uninstall', 0 );
+if ( ! $noindex_seo_delete ) {
+	// Data is preserved. Nothing to do.
+	exit;
+}
+
+// User has opted in to full data removal — proceed with cleanup.
 
 // Define contexts and directives.
 $noindex_seo_contexts   = array(
@@ -60,6 +72,7 @@ delete_option( 'noindex_seo_config_seoplugins' );
 delete_option( 'noindex_seo_config_method' );
 delete_option( 'noindex_seo_config_granular' );
 delete_option( 'noindex_seo_config_version' );
+delete_option( 'noindex_seo_config_delete_on_uninstall' );
 
 // Delete transient cache.
 delete_transient( 'noindex_seo_options' );

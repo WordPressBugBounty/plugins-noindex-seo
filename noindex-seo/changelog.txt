@@ -1,5 +1,37 @@
 == Changelog ==
 
+= 2.0.1 [2026-05-25] =
+
+**Added**
+
+* New option "Delete all plugin data on uninstall" (Settings → noindex SEO → General Configuration). By default, all data is preserved when the plugin is uninstalled. Enable this option to remove all settings and per-post directives on uninstall.
+
+**Changed**
+
+* Lowered minimum WordPress requirement from 6.6 to 5.7, matching the actual oldest API used (`wp_robots` filter, introduced in WP 5.7). Verified with `johnbillion/wp-compat`.
+* Custom post types registered by plugins or themes on the `init` hook now correctly receive the Robots column, bulk actions, and list filter in granular control mode. Previously only built-in post types (`post`, `page`, `attachment`) were supported.
+
+**Code Quality**
+
+* Added `NOINDEX_SEO_VERSION` constant; all enqueued assets now use it for cache-busting.
+* PHP type safety: replaced `(string)` casts on `mixed` values from `get_option()`, `get_post_meta()`, and `$_POST`/`$_GET`/`$_REQUEST` superglobals with proper `is_string()`/`is_scalar()` narrowing guards. Passes PHPStan level 9 on PHP 8.5 with zero errors.
+* Extracted `noindex_seo_save_directives_from_post()` helper; meta box save and Quick Edit save now share a single implementation.
+* Improved `noindex_seo_contexts` filter documentation: documents the `str_replace`-based directive key derivation and the `noindex_seo_{context}` key format requirement.
+* Removed dead code: `isset($field['conditional'])` block (key never existed in field shape), redundant `isset($field['suggestion'])` guard, redundant `isset($section_icons[$section_id])` guard, and a provably non-empty `$meta_query` check.
+* Removed dead hook registration for `update_option_noindexseo` (Settings API group name, not an option name; hook never fired).
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+**Tests**
+
+* PHP Coding Standards: 3.13.5
+* WordPress Coding Standards: 3.3.0
+* PHPStan: 2.1.55
+* PHPUnit: 9.6.34
+
 = 2.0.0 [2026-01-20] =
 
 **New Features**
