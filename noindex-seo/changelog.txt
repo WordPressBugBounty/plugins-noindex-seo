@@ -1,5 +1,167 @@
 == Changelog ==
 
+= 3.1.1 [2026-07-18] =
+
+**Security**
+
+* Tightened the ACL on the two REST endpoints introduced in 3.1.0. The original release used `__return_true` for both `permission_callback`s, which would have leaked the full noindex configuration to anyone hitting `/wp-json/noindex-seo/v1/settings`. Fixed callbacks:
+  - `/settings` now requires `manage_options`. The consolidated array reveals the site's full SEO strategy in a single response, so it is admin-only.
+  - `/effective?post_id=N` is public only for posts with `post_status=publish` and no password (the directives for those would appear in the HTML `<meta>` tag of the rendered page anyway). Drafts, private posts, scheduled posts, password-protected posts, and trashed posts require `edit_post` capability for the specific post.
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+**Tests**
+
+* Added 4 tests covering the new permission model: unauthenticated rejected on `/settings`, editor rejected on `/settings`, unauthenticated/subscriber rejected on `/effective` for drafts, public access preserved on `/effective` for published posts.
+
+= 3.1.0 [2026-07-18] =
+
+Closes the three remaining HIGH-priority items from the original gap audit.
+
+**Added**
+
+* **WP core XML sitemap integration.** Hooks `wp_sitemaps_posts_query_args`, `wp_sitemaps_taxonomies_query_args`, and `wp_sitemaps_users_query_args` so URLs that should not be indexed drop out of `/wp-sitemap.xml`. Two layers of exclusion: (1) whole-type exclusion — if `singular.noindex=1` hides every post type; `single.noindex=1` hides all posts; `page.noindex=1` hides all pages; `attachment.noindex=1` hides all attachments; `cpt_{type}.noindex=1` hides that CPT; `category.noindex=1` / `tag.noindex=1` hide those taxonomies; `author.noindex=1` hides the entire users sitemap. (2) per-item exclusion — posts/terms with the granular `_noindex_seo_override=1` + `_noindex_seo_noindex=1` flag are excluded from their type's sitemap. Closes the biggest SEO-quality gap (Google Search Console flags noindexed URLs in sitemaps as a coverage warning).
+* **Per-CPT global defaults.** Every public custom post type (anything public + non-built-in: WooCommerce `product`, EDD `download`, LMS lesson/course, etc.) now gets its own context `cpt_{post_type}` and a "Custom Post Types" section in the settings page. Previously every CPT single fell into the generic `single` bucket; now each CPT can have its own noindex / nofollow / noarchive / nosnippet / noimageindex defaults that apply globally to all of its items.
+* **REST API exposure.** Two new read-only endpoints under `/wp-json/noindex-seo/v1/`:
+  - `GET /settings` — returns the consolidated settings array (contexts × directives + config), so headless consumers (Next.js, Gatsby, mobile apps) can read the global configuration.
+  - `GET /effective?post_id=123` — returns the active directive list for a specific post, computed by the same precedence used on the front-end (per-post override → per-CPT default → built-in `single`/`page`/`attachment` context). Includes the implementation `method` so consumers know whether to render a `<meta>` tag, an `X-Robots-Tag` header, or both.
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+**Tests**
+
+* Added `tests/test-sitemap.php` (per-post + global-context exclusion for posts/terms/users sitemaps).
+* Added `tests/test-rest-api.php` (settings endpoint, effective endpoint for post-meta and CPT-default sources, 404 for unknown post).
+* Added `tests/test-cpt-contexts.php` (dynamic context registration, per-CPT settings application).
+
+= 3.0.4 [2026-07-18] =
+
+**Changed**
+
+* Moved the "Apply Recommended Defaults" button from above the Search Results section to immediately above the "Search options…" input box. The previous position pushed the button below the fold on smaller screens; the new position sits it next to the search field where users naturally look for global actions.
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+= 3.0.3 [2026-07-18] =
+
+**Added**
+
+* **"Robots" column on taxonomy list tables.** When per-term granular control is on, the Categories / Tags / custom taxonomy list pages now show a "Robots" column with the same directive badges (🔍 noindex, 🔗 nofollow, 💾 noarchive, 📄 nosnippet, 🖼️ noimageindex) used on the post list. Makes it possible to scan at a glance which terms have an override and which directives are active — parity with the existing post-list UX.
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+**Tests**
+
+* Added 3 tests covering the term column renderer (no override, with override, passthrough for other columns).
+
+= 3.0.2 [2026-07-18] =
+
+**Fixed**
+
+* Duplicate "Search Engine Visibility" panel in the block editor. The plugin previously registered both a classic PHP meta box (`add_meta_box`) AND a native Gutenberg sidebar panel (`PluginDocumentSettingPanel` via `assets/js/editor-sidebar.js`) with the same title — both showed up in the block editor sidebar as two panels with the same name. The classic meta box is now suppressed on block-editor screens (detected via `get_current_screen()->is_block_editor`, which respects the Classic Editor plugin's per-request override). Classic editor users still get the meta box.
+
+**Added**
+
+* **Per-term granular control for taxonomies.** Mirrors the existing per-post granular pattern: when "Enable per-term granular control" is on, every public taxonomy (`category`, `post_tag`, and any custom public taxonomy like WooCommerce's `product_cat` / `product_tag`) gets a "Search Engine Visibility" panel on the Edit Tag screen with an override checkbox and the five directive checkboxes. Term-level directives take precedence over the global `category` / `tag` / `post_type_archive` settings when the term has the override enabled. Backed by `register_term_meta()` with `show_in_rest=true` so headless consumers can read them.
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+**Tests**
+
+* Added `tests/test-term-meta.php` covering registration, save handler, front-end override precedence, and uninstall cleanup.
+
+= 3.0.1 [2026-07-18] =
+
+**Fixed**
+
+* Self-healing v3 migration. If `noindex_seo_config_version` claims migration completed (version >= 3) but the consolidated `noindex_seo_settings` option is somehow missing, `noindex_seo_check_migration()` now re-runs the migration automatically. This recovers silently from partial failures: object-cache staleness after the write, request interrupted mid-migration, a third-party plugin clearing options, or DB write errors that did not raise a PHP error. Without this guard, the front-end would fall back to all-zero defaults (site fully indexable) until someone re-saved the settings page.
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+**Tests**
+
+* Added test for the self-healing migration path.
+
+= 3.0.0 [2026-07-18] =
+
+**Major release — storage consolidation.** Settings are now stored in a single autoloaded option (`noindex_seo_settings`) instead of ~110 individual options. Reduces `wp_options` autoload weight on every page load. Legacy options are preserved (marked non-autoloaded) for one major version to allow safe rollback to 2.x; they will be removed in 4.0.
+
+**Added**
+
+* **"Apply recommended defaults" button** on the settings page. One click enables all 12 contexts flagged as "Recommended" in the UI (privacy policy, date archives, pagination, search results, attachment pages, preview/customize-preview, and 404). Previously required ~60 individual checkbox toggles.
+* **Filterable conflict-detection list.** The list of plugins that may conflict with noindex SEO is now passed through `apply_filters('noindex_seo_conflicting_plugins', ...)`. Third-party code can extend or replace the list without editing the plugin.
+
+**Changed**
+
+* **Storage consolidated**: 110 directive options (`{directive}_seo_{context}`) + 5 config options (`noindex_seo_config_*`) merged into one `noindex_seo_settings` array. Reads go through new accessors (`noindex_seo_get_settings()`, `noindex_seo_get_setting()`, `noindex_seo_get_config()`). The hourly transient cache is preserved on top.
+* **Transient invalidation is now automatic**: any update to `noindex_seo_settings` clears the `noindex_seo_options` transient via the `update_option_noindex_seo_settings` hook. Previously only the admin form save cleared it, leaving WP-CLI / REST / programmatic edits stale for up to one hour.
+* **Migration**: existing 2.x installs are migrated automatically on `plugins_loaded` (idempotent, version-gated by `noindex_seo_config_version`). Legacy options are kept and marked non-autoloaded so a rollback to 2.x restores the pre-3.0 state.
+* **Uninstall retrocompatibility**: `uninstall.php` deletes both the new consolidated option and all legacy individual options (via wildcard SQL). Sites that upgrade from 2.x and later uninstall will be cleaned up completely regardless of whether migration ran.
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+**Tests**
+
+* Added PHPUnit test suite (previously the project shipped only a plugin-header smoke test). Coverage: contexts helper, settings accessors, v2→v3 migration, form save, bulk actions, meta box save, conflict-detection filter.
+
+= 2.0.2 [2026-07-18] =
+
+**Fixed**
+
+* Bulk action "Enable Robots Override" no longer creates duplicate `postmeta` rows. The previous implementation used `INSERT ... ON DUPLICATE KEY UPDATE`, but WordPress's `postmeta` table has no unique key on `(post_id, meta_key)`, so the `ON DUPLICATE KEY UPDATE` branch never fired and every bulk run on a post that already had the meta inserted a duplicate row. The bulk handler now uses `update_post_meta()` and `delete_post_meta()` exclusively.
+* Bulk action "Disable Robots Override" now removes the override meta entirely (previously set its value to `0`, leaving a redundant row).
+
+**Changed**
+
+* Removed three dead contexts (`feed`, `comment_feed`, `robots`) that were registered, migrated, and cleaned up but never evaluated at runtime and never exposed in the admin UI. The plugin now consistently registers and evaluates 22 page contexts (down from a nominal 25). Existing orphan options from earlier installs are cleaned by the uninstall routine's wildcard delete.
+* Extracted `noindex_seo_get_contexts()` as the single source of truth for the context list shared by settings registration, v2 migration, form processing. `uninstall.php` retains its own copy (technical constraint: the main plugin file is not loaded during uninstall) with a sync warning comment.
+* Corrected `phpcs.xml` `minimum_supported_wp_version` from `6.6` to `5.7` to match the plugin header. This setting was stale from before the 2.0.1 minimum-WP correction.
+* Updated `readme.txt` description counts from 25 to 22 page contexts.
+* **Bulk action performance characteristic changed**: the rewrite from a single batched SQL statement to per-post `update_post_meta()` / `delete_post_meta()` calls trades O(1) queries for O(N) queries on bulk selections, in exchange for correctness (no more duplicate rows) and proper WP meta-cache invalidation. Typical admin bulk selections (≤200 posts) are unaffected; very large selections (thousands of posts) may take noticeably longer.
+
+**Deprecated**
+
+* `noindex_seo_clear_transient()`: was hooked to `update_option_noindexseo`, a hook that never fires because `noindexseo` is the Settings API group name, not an option name. The function now emits a deprecation notice via `_deprecated_function()` and continues to clear the `noindex_seo_options` transient if called directly. The transient is cleared correctly inside `noindex_seo_process_form()` after every successful save. The function will be removed in a future release.
+
+**Code Quality**
+
+* `bin/preflight.sh`: hardened temp-file handling (mktemp moved to script top, `trap … EXIT` cleanup, no more predictable `/tmp/composer-audit.*` paths that were vulnerable to symlink overwrite on shared hosting); fixed `2>/null` typo; added rsync / `.distignore` / build-tree-non-empty guards so the forbidden-artefact scan cannot pass vacuously; replaced npm-audit subshell with `pushd`/`popd` so gate counters are not lost.
+* Added `bin/preflight.sh`: automated pre-deploy verification covering PHPCS, PHPStan level 9, PHPCompatibility, PHPUnit, dependency audit, and candidate-ZIP artefact inspection. Prints a PASS/FAIL report per section and exits non-zero on any failure.
+* Added `.claude/settings.json` deny rules for `deploy.sh`, `git push`, `git tag`, and `git merge`, enforcing the agent operating boundaries mandated by AGENTS.md mechanically rather than only in prose.
+
+**Compatibility**
+
+* WordPress: 5.7 - 7.1
+* PHP: 7.2 - 8.5
+
+**Tests**
+
+* PHP Coding Standards: 3.13.5
+* WordPress Coding Standards: 3.3.0
+* PHPStan: 2.1.55
+* PHPUnit: 9.6.34
+
 = 2.0.1 [2026-05-25] =
 
 **Added**
