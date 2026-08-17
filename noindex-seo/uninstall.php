@@ -18,8 +18,6 @@
  *              until they explicitly uninstall.
  */
 
-declare(strict_types=1);
-
 // Exit if uninstall not called from WordPress.
 if ( ! defined( 'ABSPATH' ) || ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 	exit;
@@ -32,7 +30,7 @@ if ( ! defined( 'ABSPATH' ) || ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 $noindex_seo_delete           = 0;
 $noindex_seo_consolidated     = get_option( 'noindex_seo_settings', array() );
 $noindex_seo_consolidated     = is_array( $noindex_seo_consolidated ) ? $noindex_seo_consolidated : array();
-$noindex_seo_consolidated_cfg = $noindex_seo_consolidated['config'] ?? array();
+$noindex_seo_consolidated_cfg = isset( $noindex_seo_consolidated['config'] ) ? $noindex_seo_consolidated['config'] : array();
 $noindex_seo_consolidated_cfg = is_array( $noindex_seo_consolidated_cfg ) ? $noindex_seo_consolidated_cfg : array();
 if ( isset( $noindex_seo_consolidated_cfg['delete_on_uninstall'] ) ) {
 	$noindex_seo_delete = $noindex_seo_consolidated_cfg['delete_on_uninstall'] ? 1 : 0;

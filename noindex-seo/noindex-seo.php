@@ -1,13 +1,13 @@
 <?php
 /**
  * Plugin Name: noindex SEO
- * Plugin URI: https://wordpress.org/plugins/noindex-seo/
+ * Plugin URI: https://www.robotstxt.software/plugins/noindex-seo/
  * Description: Control search engine indexing with robots directives (noindex, nofollow, noarchive, nosnippet, noimageindex) for specific parts of your WordPress site.
- * Requires at least: 5.7
- * Requires PHP: 7.2
- * Version: 3.1.1
+ * Version: 3.1.3
+ * Requires at least: 4.0
+ * Requires PHP: 5.6
  * Author: ROBOTSTXT
- * Author URI: https://www.robotstxt.es/
+ * Author URI: https://www.robotstxt.software/
  * License: GPL-3.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-3.0.txt
  * Text Domain: noindex-seo
@@ -15,8 +15,6 @@
  *
  * @package noindex-seo
  */
-
-declare(strict_types=1);
 
 defined( 'ABSPATH' ) || die( 'Bye bye!' );
 
@@ -51,8 +49,19 @@ defined( 'ABSPATH' ) || die( 'Bye bye!' );
  *             published + non-password-protected posts and requires
  *             `edit_post` for everything else. The previous `__return_true`
  *             callback would have leaked the full configuration to anyone.
+ * @since 3.1.2 Audit-driven maintenance release: fixed broken CVE gate in
+ *             bin/preflight.sh, un-nested the settings page forms (HTML5
+ *             compliance), added load_plugin_textdomain() for bundled
+ *             translations, pinned all dev dependencies, wired up coverage
+ *             measurement, refreshed project docs.
+ * @since 3.1.3 Compatibility release: PHP 5.6-8.5 and WordPress 4.0-7.1
+ *             supported (declared floors now match reality — the pre-5.7
+ *             <meta name="robots"> fallback covers WordPress versions
+ *             without the wp_robots API, and every newer-API integration
+ *             degrades gracefully). Branding moved to robotstxt.software
+ *             (Plugin URI / Author URI).
  */
-define( 'NOINDEX_SEO_VERSION', '3.1.1' );
+define( 'NOINDEX_SEO_VERSION', '3.1.3' );
 
 /**
  * Option key holding the consolidated plugin settings array.
@@ -88,7 +97,7 @@ define( 'NOINDEX_SEO_SETTINGS_KEY', 'noindex_seo_settings' );
  *     }
  * }
  */
-function noindex_seo_get_settings( bool $force_refresh = false ): array {
+function noindex_seo_get_settings( $force_refresh = false ) {
 	static $cached = null;
 
 	if ( null !== $cached && ! $force_refresh ) {
@@ -168,7 +177,7 @@ function noindex_seo_get_settings( bool $force_refresh = false ): array {
  * @param string $directive Directive slug (noindex|nofollow|noarchive|nosnippet|noimageindex).
  * @return int 1 if the directive is active for the context, 0 otherwise.
  */
-function noindex_seo_get_setting( string $context, string $directive ): int {
+function noindex_seo_get_setting( $context, $directive ) {
 	$settings = noindex_seo_get_settings();
 	if ( ! isset( $settings['contexts'][ $context ][ $directive ] ) ) {
 		return 0;
@@ -185,7 +194,7 @@ function noindex_seo_get_setting( string $context, string $directive ): int {
  * @param mixed  $fallback Default if the key is missing.
  * @return mixed
  */
-function noindex_seo_get_config( string $key, $fallback = null ) {
+function noindex_seo_get_config( $key, $fallback = null ) {
 	$settings = noindex_seo_get_settings();
 	if ( ! isset( $settings['config'][ $key ] ) ) {
 		return $fallback;
@@ -201,7 +210,7 @@ function noindex_seo_get_config( string $key, $fallback = null ) {
  * @param array<string, mixed> $settings Settings array (same shape as noindex_seo_get_settings()).
  * @return void
  */
-function noindex_seo_update_settings( array $settings ): void {
+function noindex_seo_update_settings( array $settings ) {
 	// Keep the version tag current.
 	$settings['version'] = 3;
 	update_option( NOINDEX_SEO_SETTINGS_KEY, $settings );
@@ -225,9 +234,12 @@ function noindex_seo_update_settings( array $settings ): void {
  * The meta tag method is more visible and easier for users to verify.
  *
  * @since 1.1.0
- * @since 2.0.0 Removed fallback for WordPress < 5.7. Requires WP 5.7+ (the 6.6 minimum in the 2.0.0 header was overly conservative; corrected in 2.0.1).
  * @since 2.0.0 Added support for HTTP X-Robots-Tag headers and multiple implementation methods.
  * @since 2.0.0 Added support for multiple directives (noindex, nofollow, noarchive, nosnippet, noimageindex).
+ * @since 3.1.3 Restored the fallback for WordPress < 5.7: directives are
+ *              printed as a classic <meta name="robots"> tag on wp_head when
+ *              the wp_robots API is not available, so the plugin works from
+ *              WordPress 4.0 again.
  *
  * @see https://developer.wordpress.org/reference/hooks/wp_robots/
  * @see https://developers.google.com/search/docs/crawling-indexing/robots-meta-tag
@@ -236,7 +248,7 @@ function noindex_seo_update_settings( array $settings ): void {
  * @param array<int, string> $directives Array of directives to apply. Default array('noindex').
  * @return void
  */
-function noindex_seo_metarobots( string $method = 'meta', array $directives = array( 'noindex' ) ): void {
+function noindex_seo_metarobots( $method = 'meta', array $directives = array( 'noindex' ) ) {
 	// Sanitize method.
 	$valid_methods = array( 'meta', 'header', 'both' );
 	$method        = in_array( $method, $valid_methods, true ) ? $method : 'meta';
@@ -263,10 +275,17 @@ function noindex_seo_metarobots( string $method = 'meta', array $directives = ar
 	$use_meta        = in_array( $method, array( 'meta', 'both' ), true );
 	$fallback_needed = in_array( $method, array( 'header', 'both' ), true ) && ! $header_sent;
 
-	if ( $use_meta || $fallback_needed ) {
+	if ( ! ( $use_meta || $fallback_needed ) ) {
+		return;
+	}
+
+	if ( function_exists( 'wp_robots' ) ) {
+		// WordPress 5.7+: inject the directives into the core robots API.
+		// On WordPress older than 5.7 the wp_robots filter does not exist and the classic wp_head output below is used instead.
+		/* @phpstan-ignore WPCompat.filterNotAvailable.wprobots */
 		add_filter(
 			'wp_robots',
-			function ( array $robots ) use ( $directives ): array {
+			function ( array $robots ) use ( $directives ) {
 				foreach ( $directives as $directive ) {
 					$robots[ $directive ] = true;
 				}
@@ -274,7 +293,18 @@ function noindex_seo_metarobots( string $method = 'meta', array $directives = ar
 			},
 			99 // High priority to ensure our directives take precedence over other plugins.
 		);
+
+		return;
 	}
+
+	// WordPress 4.0 - 5.6: classic <meta name="robots"> tag on wp_head.
+	add_action(
+		'wp_head',
+		function () use ( $directives ) {
+			echo '<meta name="robots" content="' . esc_attr( implode( ', ', $directives ) ) . '">' . "\n";
+		},
+		1 // Early, so the tag sits near the top of the head like core output.
+	);
 }
 
 /**
@@ -288,7 +318,7 @@ function noindex_seo_metarobots( string $method = 'meta', array $directives = ar
  * @param int $post_id The post ID to clear directives for.
  * @return void
  */
-function noindex_seo_clear_post_directives( int $post_id ): void {
+function noindex_seo_clear_post_directives( $post_id ) {
 	$directives = array( 'noindex', 'nofollow', 'noarchive', 'nosnippet', 'noimageindex' );
 	foreach ( $directives as $directive ) {
 		delete_post_meta( $post_id, '_noindex_seo_' . $directive );
@@ -315,7 +345,7 @@ function noindex_seo_clear_post_directives( int $post_id ): void {
  *
  * @return void
  */
-function noindex_seo_show(): void {
+function noindex_seo_show() {
 	/**
 	 * Filter the contexts and corresponding option keys used for robots directives.
 	 *
@@ -405,7 +435,8 @@ function noindex_seo_show(): void {
 	// Runs after per-post (more specific) but before the global context settings.
 	// Triggered on is_category() / is_tag() / is_tax() when 'taxonomies_granular'
 	// is on AND the queried term has the override flag set in term meta.
-	if ( noindex_seo_get_config( 'taxonomies_granular', 0 ) && ( is_category() || is_tag() || is_tax() ) ) {
+	// Term meta requires WordPress 4.4+; on older versions this branch is skipped.
+	if ( function_exists( 'get_term_meta' ) && noindex_seo_get_config( 'taxonomies_granular', 0 ) && ( is_category() || is_tag() || is_tax() ) ) {
 		$term_id = get_queried_object_id();
 		if ( $term_id ) {
 			$term_override = get_term_meta( $term_id, '_noindex_seo_override', true );
@@ -494,7 +525,7 @@ function noindex_seo_show(): void {
 		'single'            => is_single(),
 		'page'              => is_page(),
 		'attachment'        => is_attachment(),
-		'privacy_policy'    => is_privacy_policy(),
+		'privacy_policy'    => function_exists( 'is_privacy_policy' ) && is_privacy_policy(),
 		'category'          => is_category(),
 		'tag'               => is_tag(),
 		'author'            => is_author(),
@@ -512,7 +543,7 @@ function noindex_seo_show(): void {
 		'singular'          => is_singular() && ! ( is_single() || is_page() || is_attachment() ),
 		'paged'             => is_paged() && ! is_front_page() && ! is_home(),
 		'preview'           => is_preview(),
-		'customize_preview' => is_customize_preview(),
+		'customize_preview' => function_exists( 'is_customize_preview' ) && is_customize_preview(),
 	);
 
 	// Get implementation method configuration.
@@ -570,7 +601,7 @@ function noindex_seo_show(): void {
  *
  * @return void
  */
-function noindex_seo_check_migration(): void {
+function noindex_seo_check_migration() {
 	$current_config_version = get_option( 'noindex_seo_config_version', 0 );
 
 	// Check if we need to migrate to version 2.
@@ -607,7 +638,7 @@ function noindex_seo_check_migration(): void {
  *
  * @return void
  */
-function noindex_seo_migrate_to_v2(): void {
+function noindex_seo_migrate_to_v2() {
 	$contexts = noindex_seo_get_contexts();
 
 	$new_directives = array( 'nofollow', 'noarchive', 'nosnippet', 'noimageindex' );
@@ -659,7 +690,7 @@ function noindex_seo_migrate_to_v2(): void {
  *
  * @return void
  */
-function noindex_seo_migrate_to_v3(): void {
+function noindex_seo_migrate_to_v3() {
 	$contexts   = noindex_seo_get_contexts();
 	$directives = array( 'noindex', 'nofollow', 'noarchive', 'nosnippet', 'noimageindex' );
 
@@ -746,6 +777,27 @@ add_action( 'admin_init', 'noindex_seo_register' );
 add_action( 'admin_menu', 'noindex_seo_menu' );
 add_action( 'admin_enqueue_scripts', 'noindex_seo_enqueue_admin_assets' );
 add_action( 'plugins_loaded', 'noindex_seo_check_migration' );
+add_action( 'init', 'noindex_seo_load_textdomain' );
+
+/**
+ * Loads the plugin's translated strings from the bundled languages directory.
+ *
+ * WordPress auto-loads translations from `wp-content/languages/plugins/`, but
+ * the `.mo` files shipped in the plugin's own `languages/` directory require
+ * this explicit call. Hooked on {@see 'init'} so the text domain is available
+ * before any user-facing string is rendered.
+ *
+ * @since 3.1.2
+ *
+ * @return void
+ */
+function noindex_seo_load_textdomain() {
+	load_plugin_textdomain(
+		'noindex-seo',
+		false,
+		dirname( plugin_basename( __FILE__ ) ) . '/languages'
+	);
+}
 
 /**
  * Excludes noindexed posts from the core XML sitemap (WP 5.5+).
@@ -772,7 +824,7 @@ add_action( 'plugins_loaded', 'noindex_seo_check_migration' );
  * @param string               $post_type Post type being listed.
  * @return array<string, mixed> Filtered arguments.
  */
-function noindex_seo_filter_sitemap_posts( array $args, string $post_type ): array {
+function noindex_seo_filter_sitemap_posts( array $args, $post_type ) {
 	// Layer 1: whole-post-type exclusion via global context settings.
 	// 'singular' is the catch-all — if it is noindexed, hide everything.
 	if ( 1 === noindex_seo_get_setting( 'singular', 'noindex' ) ) {
@@ -828,6 +880,8 @@ function noindex_seo_filter_sitemap_posts( array $args, string $post_type ): arr
 
 	return $args;
 }
+// The hook only exists on WP 5.5+; on older versions the filter simply never fires.
+/* @phpstan-ignore WPCompat.filterNotAvailable.wpsitemapspostsqueryargs */
 add_filter( 'wp_sitemaps_posts_query_args', 'noindex_seo_filter_sitemap_posts', 10, 2 );
 
 /**
@@ -849,7 +903,7 @@ add_filter( 'wp_sitemaps_posts_query_args', 'noindex_seo_filter_sitemap_posts', 
  * @param string               $taxonomy Taxonomy being listed.
  * @return array<string, mixed> Filtered arguments.
  */
-function noindex_seo_filter_sitemap_taxonomies( array $args, string $taxonomy ): array {
+function noindex_seo_filter_sitemap_taxonomies( array $args, $taxonomy ) {
 	// Layer 1: whole-taxonomy exclusion via global context settings.
 	$context_for_tax = '';
 	if ( 'category' === $taxonomy ) {
@@ -893,6 +947,8 @@ function noindex_seo_filter_sitemap_taxonomies( array $args, string $taxonomy ):
 
 	return $args;
 }
+// The hook only exists on WP 5.5+; on older versions the filter simply never fires.
+/* @phpstan-ignore WPCompat.filterNotAvailable.wpsitemapstaxonomiesqueryargs */
 add_filter( 'wp_sitemaps_taxonomies_query_args', 'noindex_seo_filter_sitemap_taxonomies', 10, 2 );
 
 /**
@@ -911,12 +967,14 @@ add_filter( 'wp_sitemaps_taxonomies_query_args', 'noindex_seo_filter_sitemap_tax
  * @param array<string, mixed> $args WP_User_Query arguments for the sitemap user query.
  * @return array<string, mixed> Filtered arguments.
  */
-function noindex_seo_filter_sitemap_users( array $args ): array {
+function noindex_seo_filter_sitemap_users( array $args ) {
 	if ( 1 === noindex_seo_get_setting( 'author', 'noindex' ) ) {
 		$args['include'] = array( 0 );
 	}
 	return $args;
 }
+// The hook only exists on WP 5.5+; on older versions the filter simply never fires.
+/* @phpstan-ignore WPCompat.filterNotAvailable.wpsitemapsusersqueryargs */
 add_filter( 'wp_sitemaps_users_query_args', 'noindex_seo_filter_sitemap_users' );
 
 /**
@@ -938,10 +996,18 @@ add_filter( 'wp_sitemaps_users_query_args', 'noindex_seo_filter_sitemap_users' )
  * Hooked to the {@see 'rest_api_init'} action.
  *
  * @since 3.1.0
+ * @since 3.1.3 No-ops on WordPress versions without the complete REST API
+ *              (pre-4.7): the routes are simply not registered there.
  *
  * @return void
  */
-function noindex_seo_register_rest_routes(): void {
+function noindex_seo_register_rest_routes() {
+	// The complete REST API (including rest_authorization_required_code(),
+	// used by both permission callbacks) exists since WordPress 4.7.
+	if ( ! function_exists( 'register_rest_route' ) || ! function_exists( 'rest_authorization_required_code' ) ) {
+		return;
+	}
+
 	register_rest_route(
 		'noindex-seo/v1',
 		'/settings',
@@ -974,6 +1040,8 @@ function noindex_seo_register_rest_routes(): void {
 		)
 	);
 }
+// The action only exists on WP 4.4+; on older versions it simply never fires.
+/* @phpstan-ignore WPCompat.actionNotAvailable.restapiinit */
 add_action( 'rest_api_init', 'noindex_seo_register_rest_routes' );
 
 /**
@@ -991,10 +1059,11 @@ add_action( 'rest_api_init', 'noindex_seo_register_rest_routes' );
  */
 function noindex_seo_rest_settings_permission_check() {
 	if ( ! current_user_can( 'manage_options' ) ) {
+		$status = function_exists( 'rest_authorization_required_code' ) ? rest_authorization_required_code() : 401;
 		return new WP_Error(
 			'noindex_seo_rest_forbidden',
 			__( 'You do not have permission to read the noindex SEO settings.', 'noindex-seo' ),
-			array( 'status' => rest_authorization_required_code() )
+			array( 'status' => $status )
 		);
 	}
 	return true;
@@ -1024,6 +1093,8 @@ function noindex_seo_rest_settings_permission_check() {
  * @return true|WP_Error True if access is allowed, WP_Error otherwise.
  */
 function noindex_seo_rest_effective_permission_check( WP_REST_Request $request ) {
+	// get_param() exists since WP 4.4 and this callback is only registered on WP 4.7+ (see route registration guard).
+	/* @phpstan-ignore WPCompat.methodNotAvailable */
 	$raw_post_id = $request->get_param( 'post_id' );
 	$post_id     = is_numeric( $raw_post_id ) ? (int) $raw_post_id : 0;
 	$post        = get_post( $post_id );
@@ -1041,10 +1112,11 @@ function noindex_seo_rest_effective_permission_check( WP_REST_Request $request )
 
 	// Everything else requires edit permission for the specific post.
 	if ( ! current_user_can( 'edit_post', $post->ID ) ) {
+		$status = function_exists( 'rest_authorization_required_code' ) ? rest_authorization_required_code() : 401;
 		return new WP_Error(
 			'noindex_seo_rest_forbidden',
 			__( 'You do not have permission to read directives for this post.', 'noindex-seo' ),
-			array( 'status' => rest_authorization_required_code() )
+			array( 'status' => $status )
 		);
 	}
 
@@ -1063,7 +1135,7 @@ function noindex_seo_rest_effective_permission_check( WP_REST_Request $request )
  *
  * @return WP_REST_Response The settings payload.
  */
-function noindex_seo_rest_get_settings(): WP_REST_Response {
+function noindex_seo_rest_get_settings() {
 	$settings = noindex_seo_get_settings();
 	unset( $settings['version'] );
 	return new WP_REST_Response( $settings, 200 );
@@ -1090,7 +1162,9 @@ function noindex_seo_rest_get_settings(): WP_REST_Response {
  * @param WP_REST_Request $request Request with `post_id` param.
  * @return WP_REST_Response The effective-directives payload.
  */
-function noindex_seo_rest_get_effective( WP_REST_Request $request ): WP_REST_Response {
+function noindex_seo_rest_get_effective( WP_REST_Request $request ) {
+	// get_param() exists since WP 4.4 and this callback is only registered on WP 4.7+ (see route registration guard).
+	/* @phpstan-ignore WPCompat.methodNotAvailable */
 	$raw_post_id = $request->get_param( 'post_id' );
 	$post_id     = is_numeric( $raw_post_id ) ? (int) $raw_post_id : 0;
 	$post        = get_post( $post_id );
@@ -1178,7 +1252,7 @@ function noindex_seo_rest_get_effective( WP_REST_Request $request ): WP_REST_Res
  *
  * @return void
  */
-function noindex_seo_invalidate_cache_on_settings_update(): void {
+function noindex_seo_invalidate_cache_on_settings_update() {
 	delete_transient( 'noindex_seo_options' );
 }
 add_action( 'update_option_' . NOINDEX_SEO_SETTINGS_KEY, 'noindex_seo_invalidate_cache_on_settings_update' );
@@ -1195,7 +1269,7 @@ add_action( 'add_option_' . NOINDEX_SEO_SETTINGS_KEY, 'noindex_seo_invalidate_ca
  * @param string $hook The current admin page hook.
  * @return void
  */
-function noindex_seo_enqueue_admin_assets( string $hook ): void {
+function noindex_seo_enqueue_admin_assets( $hook ) {
 	// Only load on our settings page..
 	if ( 'settings_page_noindex_seo' !== $hook ) {
 		return;
@@ -1241,7 +1315,7 @@ function noindex_seo_enqueue_admin_assets( string $hook ): void {
  *
  * @return void
  */
-function noindex_seo_enqueue_editor_assets(): void {
+function noindex_seo_enqueue_editor_assets() {
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
@@ -1252,7 +1326,15 @@ function noindex_seo_enqueue_editor_assets(): void {
 	$screen = get_current_screen();
 
 	// Only load in block editor for supported post types.
-	if ( ! $screen || ! $screen->is_block_editor() ) {
+	// WP_Screen::is_block_editor() exists since WordPress 5.0; older versions
+	// never use the block editor, so the script is not loaded there.
+	if ( ! $screen || version_compare( get_bloginfo( 'version' ), '5.0', '<' ) ) {
+		return;
+	}
+
+	// is_block_editor() exists since WP 5.0; this callback only runs on WP 5.0+ because the hook only fires there.
+	/* @phpstan-ignore WPCompat.methodNotAvailable */
+	if ( ! $screen->is_block_editor() ) {
 		return;
 	}
 
@@ -1272,12 +1354,17 @@ function noindex_seo_enqueue_editor_assets(): void {
 		true
 	);
 
-	// Set up translations for the script.
-	wp_set_script_translations(
-		'noindex-seo-editor-sidebar',
-		'noindex-seo'
-	);
+	// Set up translations for the script (wp_set_script_translations exists
+	// since WordPress 5.0; on older versions the block editor is never used).
+	if ( function_exists( 'wp_set_script_translations' ) ) {
+		wp_set_script_translations(
+			'noindex-seo-editor-sidebar',
+			'noindex-seo'
+		);
+	}
 }
+// The action only exists on WP 5.0+; on older versions it simply never fires.
+/* @phpstan-ignore WPCompat.actionNotAvailable.enqueueblockeditorassets */
 add_action( 'enqueue_block_editor_assets', 'noindex_seo_enqueue_editor_assets' );
 
 /**
@@ -1294,7 +1381,7 @@ add_action( 'enqueue_block_editor_assets', 'noindex_seo_enqueue_editor_assets' )
  * @param array<string|int, string> $links Array of existing action links for the plugin.
  * @return array<string|int, string> Modified array including the "Settings" link.
  */
-function noindex_seo_settings_link( array $links ): array {
+function noindex_seo_settings_link( array $links ) {
 	$settings_link = '<a href="' . esc_url( admin_url( 'options-general.php?page=noindex_seo' ) ) . '">' . esc_html__( 'Settings', 'noindex-seo' ) . '</a>';
 	$links[]       = $settings_link;
 	return $links;
@@ -1313,7 +1400,7 @@ function noindex_seo_settings_link( array $links ): array {
  *
  * @return void
  */
-function noindex_seo_menu(): void {
+function noindex_seo_menu() {
 	add_options_page(
 		__( 'noindex SEO', 'noindex-seo' ),
 		__( 'noindex SEO', 'noindex-seo' ),
@@ -1346,7 +1433,7 @@ function noindex_seo_menu(): void {
  *
  * @return array<int, string> List of context slugs.
  */
-function noindex_seo_get_contexts(): array {
+function noindex_seo_get_contexts() {
 	$base = array(
 		'archive',
 		'attachment',
@@ -1391,6 +1478,29 @@ function noindex_seo_get_contexts(): array {
 }
 
 /**
+ * Returns a safe display label for a custom post type object.
+ *
+ * Helper for the settings page: prefers the plural labels->name and falls
+ * back to the raw post type slug when the labels object is incomplete.
+ *
+ * @since 3.1.3
+ *
+ * @param object $cpt A WP_Post_Type object (or anything exposing ->name).
+ * @return string The label to display.
+ */
+function noindex_seo_get_cpt_label( $cpt ) {
+	if ( isset( $cpt->labels->name ) && '' !== (string) $cpt->labels->name ) {
+		return (string) $cpt->labels->name;
+	}
+
+	if ( isset( $cpt->name ) ) {
+		return (string) $cpt->name;
+	}
+
+	return '';
+}
+
+/**
  * Registers all settings used by the 'noindex SEO' plugin.
  *
  * This function registers individual options for each context and directive combination.
@@ -1409,10 +1519,13 @@ function noindex_seo_get_contexts(): array {
  * @since 1.0.0
  * @since 2.0.0 Added support for multiple directives per context.
  * @since 2.0.2 Removed dead `update_option_noindexseo` reference (the hook never fired).
+ * @since 3.1.3 Uses the two-argument register_setting() form: the third
+ *              $args array is only supported since WordPress 4.7, and all
+ *              sanitization already happens in the admin-post form handler.
  *
  * @return void
  */
-function noindex_seo_register(): void {
+function noindex_seo_register() {
 	$contexts = noindex_seo_get_contexts();
 
 	$directives = array( 'noindex', 'nofollow', 'noarchive', 'nosnippet', 'noimageindex' );
@@ -1420,55 +1533,14 @@ function noindex_seo_register(): void {
 	// Register each directive for each context.
 	foreach ( $contexts as $context ) {
 		foreach ( $directives as $directive ) {
-			register_setting(
-				'noindexseo',
-				$directive . '_seo_' . $context,
-				array(
-					'type'    => 'integer',
-					'default' => 0,
-				)
-			);
+			register_setting( 'noindexseo', $directive . '_seo_' . $context );
 		}
 	}
 
-	register_setting(
-		'noindexseo',
-		'noindex_seo_config_seoplugins',
-		array(
-			'type'    => 'integer',
-			'default' => 0,
-		)
-	);
-
-	register_setting(
-		'noindexseo',
-		'noindex_seo_config_method',
-		array(
-			'type'              => 'string',
-			'default'           => 'meta',
-			'sanitize_callback' => function ( $value ): string {
-				return in_array( $value, array( 'meta', 'header', 'both' ), true ) ? $value : 'meta';
-			},
-		)
-	);
-
-	register_setting(
-		'noindexseo',
-		'noindex_seo_config_granular',
-		array(
-			'type'    => 'integer',
-			'default' => 0,
-		)
-	);
-
-	register_setting(
-		'noindexseo',
-		'noindex_seo_config_delete_on_uninstall',
-		array(
-			'type'    => 'integer',
-			'default' => 0,
-		)
-	);
+	register_setting( 'noindexseo', 'noindex_seo_config_seoplugins' );
+	register_setting( 'noindexseo', 'noindex_seo_config_method' );
+	register_setting( 'noindexseo', 'noindex_seo_config_granular' );
+	register_setting( 'noindexseo', 'noindex_seo_config_delete_on_uninstall' );
 
 	// NOTE: 'noindexseo' is the Settings API *group* name, not an option name.
 	// update_option_noindexseo would never fire; the transient is cleared explicitly
@@ -1493,7 +1565,7 @@ function noindex_seo_register(): void {
  *
  * @return void
  */
-function noindex_seo_clear_transient(): void {
+function noindex_seo_clear_transient() {
 	_deprecated_function( __FUNCTION__, '2.0.2', 'delete_transient( \'noindex_seo_options\' )' );
 	delete_transient( 'noindex_seo_options' );
 }
@@ -1515,7 +1587,7 @@ function noindex_seo_clear_transient(): void {
  *
  * @return void
  */
-function noindex_seo_detect_conflicts(): void {
+function noindex_seo_detect_conflicts() {
 
 	$option_config_seoplugins = noindex_seo_get_config( 'seoplugins', 0 );
 
@@ -1580,7 +1652,7 @@ add_action( 'admin_init', 'noindex_seo_detect_conflicts' );
  *
  * @return void
  */
-function noindex_seo_process_form(): void {
+function noindex_seo_process_form() {
 	if ( ! current_user_can( 'manage_options' ) || ! check_admin_referer( 'update_noindex_seo_nonce' ) ) {
 		wp_die( esc_html__( 'Permission denied or invalid nonce.', 'noindex-seo' ) );
 	}
@@ -1679,7 +1751,7 @@ add_action( 'admin_post_update_noindex_seo', 'noindex_seo_process_form' );
  *
  * @return void
  */
-function noindex_seo_process_apply_suggestions(): void {
+function noindex_seo_process_apply_suggestions() {
 	if ( ! current_user_can( 'manage_options' ) || ! check_admin_referer( 'noindex_seo_apply_suggestions_nonce' ) ) {
 		wp_die( esc_html__( 'Permission denied or invalid nonce.', 'noindex-seo' ) );
 	}
@@ -1710,7 +1782,7 @@ add_action( 'admin_post_noindex_seo_apply_suggestions', 'noindex_seo_process_app
  *
  * @return string[] List of context slugs.
  */
-function noindex_seo_get_suggested_contexts(): array {
+function noindex_seo_get_suggested_contexts() {
 	/**
 	 * Filter the contexts that the "Apply recommended defaults" button enables.
 	 *
@@ -1748,13 +1820,20 @@ function noindex_seo_get_suggested_contexts(): array {
  * to enable Gutenberg sidebar panel to read and write values.
  *
  * @since 2.0.0
+ * @since 3.1.3 Skipped on WordPress versions without register_post_meta()
+ *              (pre-4.9.6): granular control still works there through the
+ *              classic meta box, Quick Edit and bulk actions.
  *
  * @return void
  */
-function noindex_seo_register_post_meta(): void {
+function noindex_seo_register_post_meta() {
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
+		return;
+	}
+
+	if ( ! function_exists( 'register_post_meta' ) ) {
 		return;
 	}
 
@@ -1802,7 +1881,7 @@ add_action( 'init', 'noindex_seo_register_post_meta' );
  *
  * @return void
  */
-function noindex_seo_add_meta_boxes(): void {
+function noindex_seo_add_meta_boxes() {
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
@@ -1821,7 +1900,7 @@ function noindex_seo_add_meta_boxes(): void {
 	// the classic meta box when the user opens a block-editor post type in
 	// classic mode.
 	$screen = get_current_screen();
-	if ( $screen && $screen->is_block_editor ) {
+	if ( $screen && version_compare( get_bloginfo( 'version' ), '5.0', '>=' ) && $screen->is_block_editor ) {
 		return;
 	}
 
@@ -1853,7 +1932,7 @@ add_action( 'add_meta_boxes', 'noindex_seo_add_meta_boxes' );
  * @param WP_Post $post The current post object.
  * @return void
  */
-function noindex_seo_render_meta_box( WP_Post $post ): void {
+function noindex_seo_render_meta_box( WP_Post $post ) {
 	// Add nonce for security.
 	wp_nonce_field( 'noindex_seo_meta_box', 'noindex_seo_meta_box_nonce' );
 
@@ -1874,8 +1953,7 @@ function noindex_seo_render_meta_box( WP_Post $post ): void {
 	$context   = ( 'page' === $post_type ) ? 'page' : 'single';
 
 	foreach ( $directives as $directive ) {
-		$option_key = $directive . '_seo_' . $context;
-		if ( get_option( $option_key, 0 ) ) {
+		if ( noindex_seo_get_setting( $context, $directive ) ) {
 			$global_directives[] = $directive;
 		}
 	}
@@ -1999,7 +2077,7 @@ function noindex_seo_render_meta_box( WP_Post $post ): void {
  * @param int $post_id The post ID to update.
  * @return void
  */
-function noindex_seo_save_directives_from_post( int $post_id ): void {
+function noindex_seo_save_directives_from_post( $post_id ) {
 	// phpcs:disable WordPress.Security.NonceVerification.Missing
 	// Nonce verification and capability checks are performed by the callers:
 	// noindex_seo_save_post_meta() and noindex_seo_save_quick_edit().
@@ -2029,7 +2107,7 @@ function noindex_seo_save_directives_from_post( int $post_id ): void {
  * @param int $post_id The post ID being saved.
  * @return void
  */
-function noindex_seo_save_post_meta( int $post_id ): void {
+function noindex_seo_save_post_meta( $post_id ) {
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
@@ -2076,11 +2154,18 @@ add_action( 'save_post', 'noindex_seo_save_post_meta' );
  * Hooked to the {@see 'init'} action.
  *
  * @since 3.0.2
+ * @since 3.1.3 Skipped on WordPress versions without register_term_meta()
+ *              (pre-4.9.6) or term meta (pre-4.4): per-term control requires
+ *              the termmeta table and its API.
  *
  * @return void
  */
-function noindex_seo_register_term_meta(): void {
+function noindex_seo_register_term_meta() {
 	if ( ! noindex_seo_get_config( 'taxonomies_granular', 0 ) ) {
+		return;
+	}
+
+	if ( ! function_exists( 'register_term_meta' ) || ! function_exists( 'get_term_meta' ) ) {
 		return;
 	}
 
@@ -2128,11 +2213,16 @@ add_action( 'init', 'noindex_seo_register_term_meta' );
  * the post meta box: one override checkbox and five directive checkboxes.
  *
  * @since 3.0.2
+ * @since 3.1.3 No-ops on WordPress versions without term meta (pre-4.4).
  *
  * @param WP_Term $term The term being edited.
  * @return void
  */
-function noindex_seo_render_term_form_fields( WP_Term $term ): void {
+function noindex_seo_render_term_form_fields( WP_Term $term ) {
+	if ( ! function_exists( 'get_term_meta' ) ) {
+		return;
+	}
+
 	wp_nonce_field( 'noindex_seo_term_meta', 'noindex_seo_term_meta_nonce' );
 
 	$override_raw = get_term_meta( $term->term_id, '_noindex_seo_override', true );
@@ -2190,13 +2280,18 @@ function noindex_seo_render_term_form_fields( WP_Term $term ): void {
  * cleared so the term falls back to the global context settings.
  *
  * @since 3.0.2
+ * @since 3.1.3 No-ops on WordPress versions without term meta (pre-4.4).
  *
  * @param int $term_id  Term ID.
  * @param int $tt_id    Term taxonomy ID (unused; required by the edited_{$taxonomy} hook signature).
  * @return void
  */
-function noindex_seo_save_term_meta( int $term_id, int $tt_id ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+function noindex_seo_save_term_meta( $term_id, $tt_id ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 	if ( ! noindex_seo_get_config( 'taxonomies_granular', 0 ) ) {
+		return;
+	}
+
+	if ( ! function_exists( 'update_term_meta' ) || ! function_exists( 'delete_term_meta' ) ) {
 		return;
 	}
 
@@ -2240,7 +2335,7 @@ function noindex_seo_save_term_meta( int $term_id, int $tt_id ): void { // phpcs
  * @param array<string, string> $columns Existing columns.
  * @return array<string, string> Modified columns.
  */
-function noindex_seo_add_custom_column( array $columns ): array {
+function noindex_seo_add_custom_column( array $columns ) {
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
@@ -2273,7 +2368,7 @@ function noindex_seo_add_custom_column( array $columns ): array {
  * @param int    $post_id Post ID.
  * @return void
  */
-function noindex_seo_display_custom_column( string $column, int $post_id ): void {
+function noindex_seo_display_custom_column( $column, $post_id ) {
 	if ( 'noindex_seo_directives' !== $column ) {
 		return;
 	}
@@ -2354,7 +2449,7 @@ function noindex_seo_display_custom_column( string $column, int $post_id ): void
 // Register column hooks after all CPTs are registered (admin_init fires after init).
 add_action(
 	'admin_init',
-	function (): void {
+	function () {
 		$post_types = get_post_types( array( 'public' => true ), 'names' );
 		foreach ( $post_types as $post_type ) {
 			add_filter( "manage_{$post_type}_posts_columns", 'noindex_seo_add_custom_column' );
@@ -2384,7 +2479,7 @@ add_action(
  * @param array<string, string> $columns Existing columns.
  * @return array<string, string> Modified columns.
  */
-function noindex_seo_add_term_custom_column( array $columns ): array {
+function noindex_seo_add_term_custom_column( array $columns ) {
 	$new_columns = array();
 	foreach ( $columns as $key => $value ) {
 		$new_columns[ $key ] = $value;
@@ -2418,8 +2513,13 @@ function noindex_seo_add_term_custom_column( array $columns ): array {
  * @param int    $term_id    Term ID.
  * @return string Filtered content.
  */
-function noindex_seo_display_term_custom_column( string $content, string $column, int $term_id ): string {
+function noindex_seo_display_term_custom_column( $content, $column, $term_id ) {
 	if ( 'noindex_seo_directives' !== $column ) {
+		return $content;
+	}
+
+	// Term meta requires WordPress 4.4+.
+	if ( ! function_exists( 'get_term_meta' ) ) {
 		return $content;
 	}
 
@@ -2473,7 +2573,7 @@ function noindex_seo_display_term_custom_column( string $content, string $column
  * @param string $post_type   Post type (unused but required by hook).
  * @return void
  */
-function noindex_seo_quick_edit_fields( string $column_name, string $post_type ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+function noindex_seo_quick_edit_fields( $column_name, $post_type ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
@@ -2577,7 +2677,7 @@ add_action( 'bulk_edit_custom_box', 'noindex_seo_quick_edit_fields', 10, 2 );
  * @param int $post_id Post ID being saved.
  * @return void
  */
-function noindex_seo_save_quick_edit( int $post_id ): void {
+function noindex_seo_save_quick_edit( $post_id ) {
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
@@ -2619,7 +2719,7 @@ add_action( 'save_post', 'noindex_seo_save_quick_edit' );
  * @param array<string, string> $bulk_actions Existing bulk actions.
  * @return array<string, string> Modified bulk actions.
  */
-function noindex_seo_register_bulk_actions( array $bulk_actions ): array {
+function noindex_seo_register_bulk_actions( array $bulk_actions ) {
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
@@ -2642,7 +2742,7 @@ function noindex_seo_register_bulk_actions( array $bulk_actions ): array {
  * @param array<int, string> $post_ids    Array of post IDs.
  * @return string Modified redirect URL.
  */
-function noindex_seo_handle_bulk_actions( string $redirect_to, string $action, array $post_ids ): string {
+function noindex_seo_handle_bulk_actions( $redirect_to, $action, array $post_ids ) {
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
@@ -2714,7 +2814,7 @@ function noindex_seo_handle_bulk_actions( string $redirect_to, string $action, a
  *
  * @return void
  */
-function noindex_seo_bulk_actions_admin_notice(): void {
+function noindex_seo_bulk_actions_admin_notice() {
 	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- URL parameter from redirect after bulk action, not form data.
 	if ( ! empty( $_REQUEST['noindex_seo_bulk_enabled'] ) ) {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- URL parameter from redirect after bulk action, not form data.
@@ -2762,7 +2862,7 @@ add_action( 'admin_notices', 'noindex_seo_bulk_actions_admin_notice' );
 // Register bulk action hooks after all CPTs are registered.
 add_action(
 	'admin_init',
-	function (): void {
+	function () {
 		$post_types = get_post_types( array( 'public' => true ), 'names' );
 		foreach ( $post_types as $post_type ) {
 			add_filter( "bulk_actions-edit-{$post_type}", 'noindex_seo_register_bulk_actions' );
@@ -2781,7 +2881,7 @@ add_action(
  * @param string $post_type Current post type (unused but required by hook).
  * @return void
  */
-function noindex_seo_add_list_filter( string $post_type ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+function noindex_seo_add_list_filter( $post_type ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 	// Check if granular control is enabled.
 	$granular_enabled = noindex_seo_get_config( 'granular', 0 );
 	if ( ! $granular_enabled ) {
@@ -2816,7 +2916,7 @@ function noindex_seo_add_list_filter( string $post_type ): void { // phpcs:ignor
  * @param WP_Query $query Current query object.
  * @return void
  */
-function noindex_seo_filter_posts_by_override( WP_Query $query ): void {
+function noindex_seo_filter_posts_by_override( WP_Query $query ) {
 	// Only in admin list view.
 	if ( ! is_admin() || ! $query->is_main_query() ) {
 		return;
@@ -2876,12 +2976,12 @@ add_action( 'pre_get_posts', 'noindex_seo_filter_posts_by_override' );
 // Register filter dropdown after all CPTs are registered.
 add_action(
 	'admin_init',
-	function (): void {
+	function () {
 		$post_types = get_post_types( array( 'public' => true ), 'names' );
 		foreach ( $post_types as $post_type ) {
 			add_action(
 				'restrict_manage_posts',
-				function () use ( $post_type ): void {
+				function () use ( $post_type ) {
 					global $typenow;
 					if ( $typenow === $post_type ) {
 						noindex_seo_add_list_filter( $post_type );
@@ -2909,7 +3009,7 @@ add_action(
  *
  * @return void
  */
-function noindex_seo_admin(): void {
+function noindex_seo_admin() {
 	// Verify user capabilities for defense in depth..
 	if ( ! current_user_can( 'manage_options' ) ) {
 		wp_die(
@@ -2968,7 +3068,7 @@ function noindex_seo_admin(): void {
 					'recommended' => __( 'Recommended', 'noindex-seo' ),
 					'suggestion'  => true,
 					'description' => __( 'Block the indexing of the privacy policy page.', 'noindex-seo' ),
-					'view_url'    => get_privacy_policy_url(),
+					'view_url'    => function_exists( 'get_privacy_policy_url' ) ? get_privacy_policy_url() : '',
 				),
 				'single'         => array(
 					'label'       => __( 'Single Post', 'noindex-seo' ),
@@ -3137,11 +3237,11 @@ function noindex_seo_admin(): void {
 		$cpt_fields = array();
 		foreach ( $public_cpts as $cpt ) {
 			$cpt_fields[ 'cpt_' . $cpt->name ] = array(
-				'label'       => $cpt->labels->name ?? $cpt->name,
+				'label'       => noindex_seo_get_cpt_label( $cpt ),
 				'recommended' => __( 'Recommended', 'noindex-seo' ),
 				'suggestion'  => false,
 				/* translators: %s: post type singular name. */
-				'description' => sprintf( __( 'Block the indexing of individual %s.', 'noindex-seo' ), $cpt->labels->name ?? $cpt->name ),
+				'description' => sprintf( __( 'Block the indexing of individual %s.', 'noindex-seo' ), noindex_seo_get_cpt_label( $cpt ) ),
 			);
 		}
 		$sections['custom_post_types']      = array(
@@ -3216,6 +3316,31 @@ function noindex_seo_admin(): void {
 		}
 		?>
 
+		<!-- "Apply Recommended Defaults" — standalone sibling form, rendered
+			BEFORE the main settings form. MUST NOT be nested inside it: HTML5
+			forbids nested <form> elements; a stray </form> inside the parent
+			would close the parent early and orphan the Save Changes button and
+			all directive checkboxes. -->
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin: 0 0 20px 0;">
+			<input type="hidden" name="action" value="noindex_seo_apply_suggestions">
+			<?php wp_nonce_field( 'noindex_seo_apply_suggestions_nonce' ); ?>
+			<?php
+			submit_button(
+				__( 'Apply Recommended Defaults', 'noindex-seo' ),
+				'secondary',
+				'noindex-seo-apply-suggestions',
+				false,
+				array(
+					'title' => __( 'Enable all directives for the 12 contexts flagged as recommended.', 'noindex-seo' ),
+				)
+			);
+			?>
+			<span class="description" style="margin-left: 8px; vertical-align: middle;">
+				<?php esc_html_e( 'Enables all 5 directives on the 12 contexts flagged "Recommended" (privacy policy, date archives, pagination, search results, attachment pages, previews, 404). Review and save.', 'noindex-seo' ); ?>
+			</span>
+		</form>
+
+		<!-- Main settings form: wraps stats, config, alert, search, sections, submit. -->
 		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
 			<input type="hidden" name="action" value="update_noindex_seo">
 			<?php wp_nonce_field( 'update_noindex_seo_nonce' ); ?>
@@ -3354,28 +3479,6 @@ function noindex_seo_admin(): void {
 				<p><?php esc_html_e( 'Important: Enabling noindex on the wrong pages can harm your search engine rankings. Only enable options you fully understand.', 'noindex-seo' ); ?></p>
 			</div>
 
-		<!-- "Apply Recommended Defaults" button — sits between the stat cards
-			and the option-search input. Separate form so it does not collide
-			with the main settings form's nonce/action. -->
-		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin: 0 0 20px 0;">
-			<input type="hidden" name="action" value="noindex_seo_apply_suggestions">
-			<?php wp_nonce_field( 'noindex_seo_apply_suggestions_nonce' ); ?>
-			<?php
-			submit_button(
-				__( 'Apply Recommended Defaults', 'noindex-seo' ),
-				'secondary',
-				'noindex-seo-apply-suggestions',
-				false,
-				array(
-					'title' => __( 'Enable all directives for the 12 contexts flagged as recommended.', 'noindex-seo' ),
-				)
-			);
-			?>
-			<span class="description" style="margin-left: 8px; vertical-align: middle;">
-				<?php esc_html_e( 'Enables all 5 directives on the 12 contexts flagged "Recommended" (privacy policy, date archives, pagination, search results, attachment pages, previews, 404). Review and save.', 'noindex-seo' ); ?>
-			</span>
-		</form>
-
 		<!-- Search Box -->
 		<div class="noindex-seo-search">
 			<input
@@ -3390,7 +3493,7 @@ function noindex_seo_admin(): void {
 		<?php
 		// Default icon when a dynamically-added section (e.g. 'custom_post_types'
 		// added in 3.1.0) doesn't have an entry in the static $section_icons map.
-		$icon = $section_icons[ $section_id ] ?? 'dashicons-admin-generic';
+		$icon = isset( $section_icons[ $section_id ] ) ? $section_icons[ $section_id ] : 'dashicons-admin-generic';
 		?>
 				<div class="noindex-seo-card" id="noindex-seo-card-<?php echo esc_attr( $section_id ); ?>">
 					<div class="noindex-seo-card-header">
